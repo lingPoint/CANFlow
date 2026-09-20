@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+from collections import deque
 from pathlib import Path
 
 import can
@@ -84,7 +85,7 @@ class ReplayWorker(QtCore.QThread):
             processed = 0
             total = sum(item.frames for item in self.files)
             batch: list[tuple[str, float, float]] = []
-            raw_rows: list[tuple[float, int, int, str, str]] = []
+            raw_rows: deque[tuple[float, int, int, str, str]] = deque(maxlen=1000)
             last_emit = time.monotonic()
             last_time = self.files[0].first
             for file_index, info in enumerate(self.files):
@@ -107,20 +108,20 @@ class ReplayWorker(QtCore.QThread):
                         if keys:
                             decoded = decode_selected(message, databases.get(channel), keys)
                             batch.extend((key.storage_key(), timestamp, value) for key, value in decoded)
-                        if not self.backfill and len(raw_rows) < 100:
+                        if not self.backfill:
                             raw_rows.append((timestamp, channel, message.arbitration_id,
                                              "FD" if message.is_fd else "CAN", message.data.hex(" ").upper()))
                         now = time.monotonic()
                         if len(batch) >= 2000 or now - last_emit >= 0.25:
                             write_samples(connection, batch)
                             batch.clear()
-                            self.advanced.emit((file_index, processed, total, last_time, raw_rows))
-                            raw_rows = []
+                            self.advanced.emit((file_index, processed, total, last_time, list(raw_rows)))
+                            raw_rows.clear()
                             last_emit = now
                 write_samples(connection, batch)
                 batch.clear()
-                self.advanced.emit((file_index, processed, total, last_time, raw_rows))
-                raw_rows = []
+                self.advanced.emit((file_index, processed, total, last_time, list(raw_rows)))
+                raw_rows.clear()
             self.completed.emit(not self._stop.is_set())
         except Exception as exc:
             self.failed.emit(str(exc))
