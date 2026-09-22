@@ -1,0 +1,223 @@
+{
+  "schema_version": 1,
+  "dbc_mappings": [
+    {
+      "channel": 1,
+      "relative_path": "tests\\CAN_FD_Demo.dbc",
+      "absolute_path": "D:\\CANFlow\\tests\\CAN_FD_Demo.dbc",
+      "sha256": "4cea3b265b783fb66c57222cbac8c5d63b8baead5beca19a9e6c2e29cdcbfea3"
+    }
+  ],
+  "selected_signals": [
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "BatterySOC",
+      "fingerprint": "e533042248a92d16b23b6131946a0d4e784b3585b3fc28da0ee9b9f88397d477"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "DrvEcoMode",
+      "fingerprint": "976cdd8a0a3ac9c7d9c05b56c016c1078b565c532c85fcf5eb8463193004c43d"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "GearSel",
+      "fingerprint": "5a02f7122beb29dd7db66bd66c371028da1eeb772e1426056f6c97b743f2cd30"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "IdleState",
+      "fingerprint": "8ca6f7fb404db8336cb6657a1a7f685c1d1ecfbe6f1760035b1dd5d3eabfbe12"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "InvIgnAngle",
+      "fingerprint": "3204223dddf3e630844101da0be7e19a565cef13715c385e7581841177358756"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "InvKnocking",
+      "fingerprint": "30f555360d287514b5d0ed83493fdc3161aee56f3118daeb0095fa8002de7662"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "InvStates",
+      "fingerprint": "f93004d9c28d29268273312af6f049bc2c673f11f2e644c3d386e3a8d761901c"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "InvTemp",
+      "fingerprint": "f2bfed53921805fa0259bbfb3db28309b24632f5835d95821a4e5757a9160138"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "InvTubePressure",
+      "fingerprint": "6c1feb4c2a3b218dafb0ddd558b9f7b541592d4598a781d68420a741fb64a4e9"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "InvValvePos",
+      "fingerprint": "39ecf47a4c0bc7faeee72bc2a5385640bb58c225a8da62c8c0846ec9190ab96b"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "MotorPower",
+      "fingerprint": "05200d15ca6bef4125c6661d0cc3dedf442bad79dd0d7fbfaefe7cc5bc4ffbc1"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "MotorSpeed",
+      "fingerprint": "42f0615ed5923cbbe1cc4d3af3ef5ac0b367c7750b5213aa43f2d5b5f9b9c5c5"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "MotorTorque",
+      "fingerprint": "b23d022c2e3301c270180019d0d3e939f4ad5fe807ae354853bc6f3cdb2f1ed8"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "MotorTorque64",
+      "fingerprint": "5d4cfff211b8fb80cc0d5664aad6a28ee6e5e59b2f282f7d888078e9ebd72dd8"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "NmSleepInd",
+      "fingerprint": "1eb4ef33ca3c87222be6d98c08512eb7c6e0616b19fabc11f2ba96bece3fe750"
+    },
+    {
+      "channel": 1,
+      "frame_id": 100,
+      "extended": false,
+      "name": "ShiftReq",
+      "fingerprint": "78235667846d11984f962238e4e8f4bf5c36a586d4f5a43e2bb06b1930735418"
+    },
+    {
+      "channel": 1,
+      "frame_id": 101,
+      "extended": false,
+      "name": "FaultCode",
+      "fingerprint": "68dd5a0cd63fb3920b80cbb794f5f63a3ee81ed5cc8ad12f06d9908ad63a05b4"
+    },
+    {
+      "channel": 1,
+      "frame_id": 101,
+      "extended": false,
+      "name": "InvStatusFD_FillByte1",
+      "fingerprint": "17c0c6faab17d54011544077ef48f64ce76bef5489dace8c2e2b48a75f0fca42"
+    },
+    {
+      "channel": 1,
+      "frame_id": 101,
+      "extended": false,
+      "name": "InvStatusFD_FillByte2",
+      "fingerprint": "fdbfb01f779022fea948de3a72462c32485ec8b63c79a9ce50565de62dfc3e47"
+    },
+    {
+      "channel": 1,
+      "frame_id": 101,
+      "extended": false,
+      "name": "InvStatusFD_FillByte3",
+      "fingerprint": "518a91470251802cf424227d1d386e5ec289100bf19ec4d60b1462bc480f867d"
+    },
+    {
+      "channel": 1,
+      "frame_id": 101,
+      "extended": false,
+      "name": "InvStatusFD_FillByte4",
+      "fingerprint": "b014de863cef3c3a9322887f5ccd26fa5f26a7b77d6126b7919cca79cf989c85"
+    },
+    {
+      "channel": 1,
+      "frame_id": 1792,
+      "extended": false,
+      "name": "Drop_Byte_00_05",
+      "fingerprint": "d129d7057447d1ed296d1be184531711c6251ad2b58e339fa90e75ad99d87787"
+    },
+    {
+      "channel": 1,
+      "frame_id": 1792,
+      "extended": false,
+      "name": "Drop_Byte_06_10",
+      "fingerprint": "bffce3b95bf727e108d8bb0637434a2681887c9f8605f150058d733f56911666"
+    },
+    {
+      "channel": 1,
+      "frame_id": 1793,
+      "extended": false,
+      "name": "Fbk_Byte_00_05",
+      "fingerprint": "2386fd80cfbbfa24ed74e41cbd53cddbc4c0346b5d606bdcf605f4eee95e7fa0"
+    },
+    {
+      "channel": 1,
+      "frame_id": 1793,
+      "extended": false,
+      "name": "Fbk_Byte_06_10",
+      "fingerprint": "24d47455e384b2921d4276347904cd564e4ed4a7a8436bf646d509aad4e2a1b5"
+    },
+    {
+      "channel": 1,
+      "frame_id": 2047,
+      "extended": false,
+      "name": "EdrvTest_Byte_00",
+      "fingerprint": "c0434bb8680d5f61a5be1e5568d58fa57d1ad60219f31fe966bc0ae034b093bf"
+    },
+    {
+      "channel": 1,
+      "frame_id": 2047,
+      "extended": false,
+      "name": "EdrvTest_Byte_01_02",
+      "fingerprint": "07520f1825be88e22bf0cb523e520eae4d5a9fd5ba2d8c5f3d7818e8c732dd70"
+    },
+    {
+      "channel": 1,
+      "frame_id": 2047,
+      "extended": false,
+      "name": "EdrvTest_Byte_03_05",
+      "fingerprint": "baa73cfc13209a91137ae1deb13ff332ede10504f95d284afa142fe6592a5bf8"
+    },
+    {
+      "channel": 1,
+      "frame_id": 2047,
+      "extended": false,
+      "name": "EdrvTest_Byte_06_09",
+      "fingerprint": "5de20acf16d3d1c7cb0115ea6b43f6247f92cccc47e9f7c8ed699c32212004ec"
+    },
+    {
+      "channel": 1,
+      "frame_id": 2047,
+      "extended": false,
+      "name": "EdrvTest_Byte_10_14",
+      "fingerprint": "afb58ccc6b6ddb500f5ad6d009dd7e02aea39219695960dc3a0163dbf39976b2"
+    }
+  ]
+}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -93,6 +95,53 @@ def available_signals(databases: dict[int, cantools.database.Database]) -> list[
             for signal in message.signals:
                 keys.append(SignalKey(channel, message.frame_id, message.is_extended_frame, signal.name))
     return keys
+
+
+def signal_definition_fingerprint(
+    key: SignalKey, databases: dict[int, cantools.database.Database]
+) -> str | None:
+    """Return a stable digest of the DBC definition behind a signal identity."""
+    database = databases.get(key.channel)
+    if database is None:
+        return None
+    try:
+        message = database.get_message_by_frame_id(key.frame_id)
+        if message.is_extended_frame != key.extended:
+            return None
+        signal = next(item for item in message.signals if item.name == key.name)
+    except (KeyError, StopIteration):
+        return None
+    definition = {
+        "frame_id": key.frame_id,
+        "extended": key.extended,
+        "name": signal.name,
+        "start": signal.start,
+        "length": signal.length,
+        "byte_order": signal.byte_order,
+        "is_signed": signal.is_signed,
+        "scale": signal.scale,
+        "offset": signal.offset,
+        "minimum": signal.minimum,
+        "maximum": signal.maximum,
+        "unit": signal.unit,
+        "choices": sorted((int(value), str(label)) for value, label in (signal.choices or {}).items()),
+    }
+    payload = json.dumps(definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def signal_unit(key: SignalKey, databases: dict[int, cantools.database.Database]) -> str:
+    database = databases.get(key.channel)
+    if database is None:
+        return ""
+    try:
+        message = database.get_message_by_frame_id(key.frame_id)
+        if message.is_extended_frame != key.extended:
+            return ""
+        signal = next(item for item in message.signals if item.name == key.name)
+        return signal.unit or ""
+    except (KeyError, StopIteration):
+        return ""
 
 
 def missing_signal_reason(
