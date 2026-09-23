@@ -21,6 +21,22 @@ def write_samples(connection: sqlite3.Connection, rows: list[tuple[str, float, f
         connection.commit()
 
 
+def nearest_sample(
+    connection: sqlite3.Connection, signal: str, timestamp: float
+) -> tuple[float, float] | None:
+    """Find the nearest decoded value without loading a signal's history."""
+    before = connection.execute(
+        "SELECT timestamp, value FROM samples WHERE signal = ? AND timestamp <= ? "
+        "ORDER BY timestamp DESC LIMIT 1", (signal, timestamp)
+    ).fetchone()
+    after = connection.execute(
+        "SELECT timestamp, value FROM samples WHERE signal = ? AND timestamp >= ? "
+        "ORDER BY timestamp ASC LIMIT 1", (signal, timestamp)
+    ).fetchone()
+    candidates = [row for row in (before, after) if row is not None]
+    return min(candidates, key=lambda row: abs(row[0] - timestamp)) if candidates else None
+
+
 def plot_points(
     connection: sqlite3.Connection, signal: str, start: float, end: float, max_bins: int = 1600
 ) -> tuple[list[float], list[float]]:

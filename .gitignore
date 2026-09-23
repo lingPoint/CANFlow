@@ -1,6 +1,8 @@
 .venv/
+.run-deps/
 __pycache__/
 *.pyc
 .pytest_cache/
+project1.canflow.json
 tests/CANSystem_CAN2.blf
 tests/CAN_FD_Demo.dbc

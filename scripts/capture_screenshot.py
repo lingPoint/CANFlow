@@ -19,7 +19,7 @@ PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 
 from canflow.app import MainWindow
-from canflow.core import available_signals, load_databases, prepare_sequence
+from canflow.core import SignalKey, available_signals, load_databases, prepare_sequence
 
 
 def make_demo(folder: Path) -> tuple[Path, Path]:
@@ -63,11 +63,11 @@ def capture(output: Path) -> None:
         try:
             window.resize(1600, 920)
             window.show()
-            splitter = window.findChild(QtWidgets.QSplitter)
-            splitter.setSizes([440, 1160])
-            window.file_table.setColumnWidth(0, 170)
-            window.file_table.setColumnWidth(1, 140)
-            window.file_table.setColumnWidth(2, 60)
+            window.wave_splitter.setSizes([450, 1150])
+            window._set_playback_details_visible(False, persist=False)
+            window.file_table.setColumnWidth(0, 125)
+            window.file_table.setColumnWidth(1, 120)
+            window.file_table.setColumnWidth(2, 55)
             window._scan_done(prepare_sequence([blf]))
             window.mapping = {1: dbc}
             window.channel_table.item(0, 1).setText(dbc.name)
@@ -86,6 +86,9 @@ def capture(output: Path) -> None:
             window.plot.setXRange(0, 30, padding=0)
             window.plot.setYRange(0, 80, padding=0)
             window._refresh_plot()
+            window.chart.cursor.setPos(15)
+            window.chart.cursor.show()
+            window._update_cursor_values(15)
             app.processEvents()
             if any(len(curve.xData) == 0 for curve in window.curves.values()):
                 raise RuntimeError("A selected demo signal has no plotted points")
@@ -94,6 +97,32 @@ def capture(output: Path) -> None:
             output.parent.mkdir(parents=True, exist_ok=True)
             if not window.grab().save(str(output), "PNG"):
                 raise RuntimeError(f"Could not save {output}")
+            window.signal_timer.stop()
+            demo_keys = set(window.selected)
+            extra_keys = [SignalKey(1, 0x200 + index, False, f"DemoSignal{index:02d}")
+                          for index in range(37)]
+            window.selected.update(extra_keys)
+            window._sync_curves()
+            origin = window.files[0].first
+            window.db.executemany("INSERT INTO samples VALUES (?, ?, ?)", [
+                (key.storage_key(), origin + 15, index + 10)
+                for index, key in enumerate(extra_keys)
+            ])
+            window.db.commit()
+            for row in range(window.curve_table.rowCount()):
+                item = window.curve_table.item(row, 0)
+                if item.data(QtCore.Qt.ItemDataRole.UserRole) not in demo_keys:
+                    item.setCheckState(QtCore.Qt.CheckState.Unchecked)
+            window._update_cursor_values(15)
+            app.processEvents()
+            dense_output = output.with_name("canflow-dense-signals-screenshot.png")
+            if not window.grab().save(str(dense_output), "PNG"):
+                raise RuntimeError(f"Could not save {dense_output}")
+            window.pages.setCurrentIndex(1)
+            app.processEvents()
+            config_output = output.with_name("canflow-config-screenshot.png")
+            if not window.grab().save(str(config_output), "PNG"):
+                raise RuntimeError(f"Could not save {config_output}")
         finally:
             window.close()
 
