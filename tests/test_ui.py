@@ -253,3 +253,62 @@ def test_playback_details_panel_can_be_hidden_and_restored() -> None:
     finally:
         window.close()
         app.processEvents()
+
+
+def test_cursor_readout_and_separate_configuration_page(tmp_path: Path) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow()
+    try:
+        key = SignalKey(1, 0x123, False, "Speed")
+        window.files = [FileInfo(tmp_path / "sample.blf", 1000, 1010, 2, (1,))]
+        window.selected = {key}
+        window._sync_curves()
+        window.db.execute("INSERT INTO samples VALUES (?, ?, ?)", (key.storage_key(), 1001, 20))
+        window.db.commit()
+        window.plot.setXRange(0, 10, padding=0)
+        window._update_cursor_values(1.0)
+        assert "1.000 s" in window.cursor_time_label.text()
+        assert window.cursor_absolute_label.text()
+        assert window.curve_table.item(0, 1).text() == "Speed"
+        assert window.curve_table.item(0, 2).text() == "20"
+        assert window.pages.currentIndex() == 0
+        assert window.curve_table.parentWidget() is window.sidebar
+        window.pages.setCurrentIndex(1)
+        assert window.file_table.isVisibleTo(window.pages)
+        assert window.signal_list.isVisibleTo(window.pages)
+        assert not window.chart.isVisibleTo(window.pages)
+        window.pages.setCurrentIndex(0)
+        assert window.chart.isVisibleTo(window.pages)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_forty_selected_signals_have_searchable_cursor_values(tmp_path: Path) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow()
+    try:
+        window.plot_timer.stop()
+        window.files = [FileInfo(tmp_path / "sample.blf", 1000, 1010, 40, (1,))]
+        keys = [SignalKey(1, index, False, f"Signal{index:02d}") for index in range(40)]
+        window.selected = set(keys)
+        window._sync_curves()
+        window.db.executemany("INSERT INTO samples VALUES (?, ?, ?)", [
+            (key.storage_key(), 1001, index) for index, key in enumerate(keys)
+        ])
+        window.db.commit()
+        window.plot.setXRange(0, 10, padding=0)
+        window._update_cursor_values(1.0)
+        assert window.curve_table.rowCount() == 40
+        assert sum(layer.visible for layer in window.chart.layers.values()) == 3
+        last_row = next(row for row in range(40) if window.curve_table.item(row, 1).text() == "Signal39")
+        assert window.curve_table.item(last_row, 2).text() == "39"
+        window.curve_search.setText("Signal39")
+        assert sum(not window.curve_table.isRowHidden(row) for row in range(40)) == 1
+        assert "1 / 40" in window.curve_footer.text()
+        assert window.display_panel.isHidden()
+        window.display_toggle.click()
+        assert not window.display_panel.isHidden()
+    finally:
+        window.close()
+        app.processEvents()
