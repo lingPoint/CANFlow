@@ -8,7 +8,7 @@ from pathlib import Path
 import can
 from PySide6 import QtCore
 
-from .core import FileInfo, SignalKey, decode_selected, inspect_file, load_databases, usable_frame
+from .core import FileInfo, SignalKey, decode_selected, inspect_file, load_databases, usable_frame, validate_sequence
 from .store import connect, write_samples
 
 
@@ -26,14 +26,9 @@ class ScanWorker(QtCore.QThread):
 
     def run(self) -> None:
         try:
-            files = [inspect_file(path, self._stop.is_set) for path in self.paths]
-            files.sort(key=lambda item: (item.first, str(item.path).lower()))
-            for previous, current in zip(files, files[1:]):
-                if current.first < previous.last:
-                    raise ValueError(
-                        f"时间重叠：{previous.path.name} 结束于 {previous.last:.6f}，"
-                        f"{current.path.name} 开始于 {current.first:.6f}"
-                    )
+            files = validate_sequence(inspect_file(path, self._stop.is_set) for path in self.paths)
+            if self._stop.is_set():
+                return
             self.scanned.emit(files)
         except InterruptedError:
             pass
@@ -65,6 +60,7 @@ class ReplayWorker(QtCore.QThread):
         self._stop = threading.Event()
         self._resume = threading.Event()
         self._resume.set()
+        self.succeeded = False
 
     def stop(self) -> None:
         self._stop.set()
@@ -112,7 +108,10 @@ class ReplayWorker(QtCore.QThread):
                             raw_rows.append((timestamp, channel, message.arbitration_id,
                                              "FD" if message.is_fd else "CAN", message.data.hex(" ").upper()))
                         now = time.monotonic()
-                        if len(batch) >= 2000 or now - last_emit >= 0.25:
+                        if len(batch) >= 2000:
+                            write_samples(connection, batch)
+                            batch.clear()
+                        if now - last_emit >= 0.25:
                             write_samples(connection, batch)
                             batch.clear()
                             self.advanced.emit((file_index, processed, total, last_time, list(raw_rows)))
@@ -122,7 +121,8 @@ class ReplayWorker(QtCore.QThread):
                 batch.clear()
                 self.advanced.emit((file_index, processed, total, last_time, list(raw_rows)))
                 raw_rows.clear()
-            self.completed.emit(not self._stop.is_set())
+            self.succeeded = not self._stop.is_set()
+            self.completed.emit(self.succeeded)
         except Exception as exc:
             self.failed.emit(str(exc))
             self.completed.emit(False)

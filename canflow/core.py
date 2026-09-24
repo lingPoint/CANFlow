@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -71,7 +73,11 @@ def prepare_sequence(paths: Iterable[Path]) -> list[FileInfo]:
     unique = list(dict.fromkeys(Path(p).resolve() for p in paths))
     if not unique:
         raise ValueError("请选择至少一个 BLF 文件")
-    files = [inspect_file(path) for path in unique]
+    return validate_sequence(inspect_file(path) for path in unique)
+
+
+def validate_sequence(files: Iterable[FileInfo]) -> list[FileInfo]:
+    files = list(files)
     files.sort(key=lambda info: (info.first, str(info.path).lower()))
     for previous, current in zip(files, files[1:]):
         if current.first < previous.last:
@@ -95,6 +101,52 @@ def available_signals(databases: dict[int, cantools.database.Database]) -> list[
     return keys
 
 
+def _signal_definition(key: SignalKey, databases: dict[int, cantools.database.Database]):
+    database = databases.get(key.channel)
+    if database is None:
+        return None
+    try:
+        message = database.get_message_by_frame_id(key.frame_id)
+        if message.is_extended_frame != key.extended:
+            return None
+        signal = next(item for item in message.signals if item.name == key.name)
+    except (KeyError, StopIteration):
+        return None
+    return message, signal
+
+
+def signal_definition_fingerprint(
+    key: SignalKey, databases: dict[int, cantools.database.Database]
+) -> str | None:
+    """Return a stable digest of the DBC definition behind a signal identity."""
+    definition = _signal_definition(key, databases)
+    if definition is None:
+        return None
+    _, signal = definition
+    definition = {
+        "frame_id": key.frame_id,
+        "extended": key.extended,
+        "name": signal.name,
+        "start": signal.start,
+        "length": signal.length,
+        "byte_order": signal.byte_order,
+        "is_signed": signal.is_signed,
+        "scale": signal.scale,
+        "offset": signal.offset,
+        "minimum": signal.minimum,
+        "maximum": signal.maximum,
+        "unit": signal.unit,
+        "choices": sorted((int(value), str(label)) for value, label in (signal.choices or {}).items()),
+    }
+    payload = json.dumps(definition, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def signal_unit(key: SignalKey, databases: dict[int, cantools.database.Database]) -> str:
+    definition = _signal_definition(key, databases)
+    return definition[1].unit or "" if definition is not None else ""
+
+
 def missing_signal_reason(
     key: SignalKey,
     files: list[FileInfo],
@@ -105,17 +157,13 @@ def missing_signal_reason(
     if not lengths:
         return "BLF 中没有对应报文"
     longest = max(lengths)
-    database = databases.get(key.channel)
-    if database is not None:
-        try:
-            message = database.get_message_by_frame_id(key.frame_id)
-            signal = next(item for item in message.signals if item.name == key.name)
-            if signal.byte_order == "little_endian":
-                required = (signal.start + signal.length + 7) // 8
-                if required > longest:
-                    return f"DBC 需要至少 {required} 字节，BLF 该报文最长 {longest} 字节"
-        except (KeyError, StopIteration):
-            pass
+    definition = _signal_definition(key, databases)
+    if definition is not None:
+        _, signal = definition
+        if signal.byte_order == "little_endian":
+            required = (signal.start + signal.length + 7) // 8
+            if required > longest:
+                return f"DBC 需要至少 {required} 字节，BLF 该报文最长 {longest} 字节"
     return "未解码出样本，请检查 DBC 与报文内容"
 
 
