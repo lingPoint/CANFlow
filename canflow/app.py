@@ -7,7 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 import pyqtgraph as pg
-from PySide6 import QtCore, QtGui, QtWidgets
+from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
 
 from .chart import MultiSignalChart, signal_color
 from .core import (
@@ -20,6 +20,16 @@ from .persistence import (
 )
 from .store import connect, nearest_sample, plot_points
 from .workers import ReplayWorker, ScanWorker
+
+
+def logo_pixmap(size: int) -> QtGui.QPixmap:
+    logo = Path(__file__).resolve().parent / "assets" / "logo-mark.svg"
+    pixmap = QtGui.QPixmap(size, size)
+    pixmap.fill(QtCore.Qt.GlobalColor.transparent)
+    painter = QtGui.QPainter(pixmap)
+    QtSvg.QSvgRenderer(str(logo)).render(painter)
+    painter.end()
+    return pixmap
 
 
 def clock_text(timestamp: float) -> str:
@@ -35,6 +45,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("CANFlow · BLF 波形回放")
+        self.setWindowIcon(QtGui.QIcon(logo_pixmap(256)))
         self.resize(1450, 900)
         self.files: list[FileInfo] = []
         self.mapping: dict[int, Path] = {}
@@ -98,6 +109,9 @@ class MainWindow(QtWidgets.QMainWindow):
         root.setSpacing(10)
         header = QtWidgets.QHBoxLayout()
         root.addLayout(header)
+        brand_icon = QtWidgets.QLabel()
+        brand_icon.setPixmap(logo_pixmap(32))
+        header.addWidget(brand_icon)
         brand = QtWidgets.QLabel("CANFlow")
         brand.setObjectName("brand")
         header.addWidget(brand)
