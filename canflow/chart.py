@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Callable
 
 import pyqtgraph as pg
@@ -35,6 +36,35 @@ class TimelineViewBox(pg.ViewBox):
             event.accept()
             return
         super().wheelEvent(event, axis=axis)
+
+
+class CaptureTimeAxis(pg.AxisItem):
+    """Keep precise relative X coordinates while formatting capture-clock ticks."""
+
+    def __init__(self):
+        super().__init__(orientation="bottom")
+        self.mode = "relative"
+        self.origin: float | None = None
+
+    def tickStrings(self, values, scale, spacing):  # noqa: N802 - pyqtgraph API
+        if self.mode != "capture" or self.origin is None:
+            return super().tickStrings(values, scale, spacing)
+        moments = [datetime.fromtimestamp(self.origin + value) for value in values]
+        origin_date = datetime.fromtimestamp(self.origin).date()
+        multiple_dates = bool(moments) and (
+            any(moment.date() != moments[0].date() for moment in moments)
+            or moments[0].date() != origin_date
+        )
+        pattern = "%Y-%m-%d %H:%M:%S" if multiple_dates else "%H:%M:%S"
+        return [moment.strftime(pattern) for moment in moments]
+
+    def refresh_label(self) -> None:
+        if self.mode == "capture":
+            date = datetime.fromtimestamp(self.origin).strftime("%Y-%m-%d") if self.origin is not None else ""
+            self.setLabel(text=f"原始采集时间（首帧 {date}）")
+        else:
+            self.setLabel(text="相对首帧时间", units="s")
+        self.update()
 
 
 class TrackAxisPanel(QtWidgets.QWidget):
@@ -72,19 +102,18 @@ class TrackAxisPanel(QtWidgets.QWidget):
             if bottom <= top:
                 continue
             color = QtGui.QColor(layer.color)
-            if key == self.chart.focused:
-                painter.setPen(QtGui.QPen(color, 2))
-                painter.drawRect(QtCore.QRect(1, top + 1, self.width() - 3, max(1, bottom - top - 2)))
             axis_x = self.width() - 5
             painter.setPen(QtGui.QPen(color, 1))
             painter.drawLine(axis_x, top, axis_x, bottom)
             low, high = layer.view.viewRange()[1]
             lane_height = bottom - top
             ticks = 3 if lane_height >= 48 else 2
+            tick_top = top + min(12, lane_height / 4)
+            tick_bottom = bottom - min(12, lane_height / 4)
             for index in range(ticks):
                 ratio = index / max(1, ticks - 1)
-                y = round(bottom - ratio * lane_height)
-                value = low + ratio * (high - low)
+                y = round(tick_bottom - ratio * (tick_bottom - tick_top))
+                value = low + (bottom - y) / lane_height * (high - low)
                 painter.setPen(QtGui.QPen(color, 1))
                 painter.drawLine(axis_x - 5, y, axis_x, y)
                 painter.setPen(foreground)
@@ -95,7 +124,7 @@ class TrackAxisPanel(QtWidgets.QWidget):
             painter.translate(12, bottom - 3)
             painter.rotate(-90)
             font = painter.font()
-            font.setBold(key == self.chart.focused)
+            font.setBold(False)
             painter.setFont(font)
             painter.setPen(color)
             title = layer.key.name + (f" [{layer.unit}]" if layer.unit else "")
@@ -134,9 +163,11 @@ class MultiSignalChart(QtWidgets.QWidget):
         self.line_width = 1.4
         self.theme = "深色"
         self.master_view = TimelineViewBox(self.scale_visible_y)
-        self.widget = pg.PlotWidget(viewBox=self.master_view, background="#111827")
+        self.time_axis = CaptureTimeAxis()
+        self.widget = pg.PlotWidget(viewBox=self.master_view, axisItems={"bottom": self.time_axis},
+                                    background="#111827")
         self.widget.showGrid(x=True, y=True, alpha=0.2)
-        self.widget.setLabel("bottom", "相对首帧时间", units="s")
+        self.time_axis.refresh_label()
         self.widget.getPlotItem().hideAxis("left")
         self.widget.getPlotItem().hideButtons()
         layout = QtWidgets.QHBoxLayout(self)
@@ -191,11 +222,19 @@ class MultiSignalChart(QtWidgets.QWidget):
         self._link_focus_axis()
 
     def _link_focus_axis(self) -> None:
-        for key, layer in self.layers.items():
-            color = layer.color if key == self.focused else "#334155"
-            width = 2 if key == self.focused else 1
-            layer.view.setBorder(pg.mkPen(color, width=width))
+        for layer in self.layers.values():
+            layer.view.setBorder(None)
         self.axis_panel.update()
+
+    def set_capture_origin(self, timestamp: float | None) -> None:
+        self.time_axis.origin = timestamp
+        self.time_axis.refresh_label()
+
+    def set_time_mode(self, mode: str) -> None:
+        if mode not in {"relative", "capture"}:
+            raise ValueError(mode)
+        self.time_axis.mode = mode
+        self.time_axis.refresh_label()
 
     def set_visible(self, key: SignalKey, visible: bool) -> None:
         layer = self.layers.get(key)
