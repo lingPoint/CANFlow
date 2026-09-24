@@ -42,7 +42,6 @@ jobs:
           --windowed
           --name CANFlow
           --add-data "canflow/assets;canflow/assets"
-          --specpath build
           run.py
 
       - name: Check EXE
