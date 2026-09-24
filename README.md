@@ -22,6 +22,8 @@ python -m venv .venv
 .venv\Scripts\python.exe run.py
 ```
 
+无需安装 Python 时，可从 [Releases](https://github.com/lingPoint/CANFlow/releases) 下载最新提交对应的 `CANFlow.exe`。每次推送代码后，GitHub Actions 会在 Windows 上运行测试并打包单文件 EXE；构建成功后创建一个以提交 SHA 命名的预发布版本。EXE 不包含 BLF 或 DBC 文件，请自行选择本地记录和配置。
+
 开发与测试另装 `requirements-dev.txt`，然后运行 `.venv\Scripts\python.exe -m pytest -q`。
 真实 1 GiB BLF 压测默认跳过；在有足够临时磁盘空间时设置 `CANFLOW_TEST_1GB=1` 并运行 `pytest tests/test_large_blf.py -s`。
 多通道压测会自行生成 1 GiB 临时 BLF；也可先执行
