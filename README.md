@@ -1,3 +1,5 @@
+![CANFlow Logo](docs/images/canflow-logo.svg)
+
 # CANFlow V2
 
 桌面 BLF 波形回放工具。V2 增加项目、可复用信号组和多纵轴波形。多选 BLF 后按各文件首帧时间排序，逐文件快速处理 CAN/CAN FD 数据；波形横轴保留原始采集时间和文件间空白。文件时间范围重叠会在导入时阻止回放。
