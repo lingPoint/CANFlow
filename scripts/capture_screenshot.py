@@ -50,7 +50,7 @@ def make_demo(folder: Path) -> tuple[Path, Path]:
     return blf, dbc
 
 
-def capture(output: Path) -> None:
+def capture(output: Path, *, time_mode: str = "relative") -> None:
     app = QtWidgets.QApplication([])
     font = Path(r"C:\Windows\Fonts\msyh.ttc")
     if font.exists():
@@ -69,6 +69,10 @@ def capture(output: Path) -> None:
             window.file_table.setColumnWidth(1, 120)
             window.file_table.setColumnWidth(2, 55)
             window._scan_done(prepare_sequence([blf]))
+            window.time_mode_combo.blockSignals(True)
+            window.time_mode_combo.setCurrentIndex(1 if time_mode == "capture" else 0)
+            window.time_mode_combo.blockSignals(False)
+            window.chart.set_time_mode(time_mode)
             window.mapping = {1: dbc}
             window.channel_table.item(0, 1).setText(dbc.name)
             window.signals = available_signals(load_databases(window.mapping))

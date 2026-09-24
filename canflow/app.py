@@ -26,6 +26,11 @@ def clock_text(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
+def cursor_clock_text(timestamp: float) -> str:
+    moment = datetime.fromtimestamp(timestamp)
+    return f"{moment:%H点%M分%S秒}{moment.microsecond // 1000}毫秒"
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
@@ -126,6 +131,15 @@ class MainWindow(QtWidgets.QMainWindow):
         config_toolbar.addWidget(config_subtitle)
         config_toolbar.addStretch()
         toolbar = QtWidgets.QHBoxLayout()
+        self.fit_button = QtWidgets.QPushButton("自动适配 X/Y")
+        self.fit_button.clicked.connect(self._fit_xy)
+        toolbar.addWidget(self.fit_button)
+        self.time_mode_combo = QtWidgets.QComboBox()
+        self.time_mode_combo.addItem("相对时间", "relative")
+        self.time_mode_combo.addItem("原始采集时间", "capture")
+        saved_mode = self.settings.value("chart/time_mode", "relative", type=str)
+        self.time_mode_combo.setCurrentIndex(1 if saved_mode == "capture" else 0)
+        toolbar.addWidget(self.time_mode_combo)
         self.add_files = QtWidgets.QPushButton("添加 BLF 文件")
         self.add_files.clicked.connect(self._add_files)
         self.add_files.setText("+ 添加 BLF 文件")
@@ -274,27 +288,11 @@ class MainWindow(QtWidgets.QMainWindow):
         inspector_layout.setContentsMargins(16, 14, 16, 12)
         inspector_layout.setSpacing(7)
         splitter.addWidget(inspector)
-        inspector_heading = QtWidgets.QLabel("游标读数")
+        inspector_heading = QtWidgets.QLabel("信号值")
         inspector_heading.setObjectName("sectionHeading")
         inspector_layout.addWidget(inspector_heading)
-        time_card = QtWidgets.QWidget()
-        time_card.setObjectName("timeCard")
-        time_card_layout = QtWidgets.QVBoxLayout(time_card)
-        time_card_layout.setContentsMargins(14, 10, 14, 10)
-        time_card_layout.setSpacing(2)
-        time_caption = QtWidgets.QLabel("相对首帧时间")
-        time_caption.setObjectName("mutedLabel")
-        time_card_layout.addWidget(time_caption)
-        self.cursor_time_label = QtWidgets.QLabel("—")
-        self.cursor_time_label.setObjectName("cursorTime")
-        time_card_layout.addWidget(self.cursor_time_label)
-        self.cursor_absolute_label = QtWidgets.QLabel("移动到波形查看游标时间")
-        self.cursor_absolute_label.setObjectName("mutedLabel")
-        time_card_layout.addWidget(self.cursor_absolute_label)
-        inspector_layout.addWidget(time_card)
         signal_heading = QtWidgets.QHBoxLayout()
         inspector_layout.addLayout(signal_heading)
-        signal_heading.addWidget(QtWidgets.QLabel("信号值"))
         signal_heading.addStretch()
         self.signal_count_label = QtWidgets.QLabel("0 个信号")
         self.signal_count_label.setObjectName("mutedLabel")
@@ -323,6 +321,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart_summary_label.setObjectName("mutedLabel")
         cursor_header.addWidget(self.chart_summary_label)
         cursor_header.addStretch()
+        self.cursor_readout = QtWidgets.QWidget()
+        self.cursor_readout.setObjectName("cursorReadout")
+        self.cursor_readout.setToolTip("移动到波形查看游标时间")
+        cursor_readout_layout = QtWidgets.QHBoxLayout(self.cursor_readout)
+        cursor_readout_layout.setContentsMargins(8, 3, 8, 3)
+        cursor_readout_layout.setSpacing(5)
+        cursor_readout_layout.addWidget(QtWidgets.QLabel("游标"))
+        self.cursor_time_label = QtWidgets.QLabel("—")
+        self.cursor_time_label.setObjectName("cursorTime")
+        cursor_readout_layout.addWidget(self.cursor_time_label)
+        self.cursor_absolute_label = QtWidgets.QLabel("移动到波形查看游标时间")
+        self.cursor_absolute_label.hide()
+        cursor_readout_layout.addWidget(self.cursor_absolute_label)
+        cursor_header.addWidget(self.cursor_readout)
+        cursor_header.addSpacing(8)
         cursor_header.addLayout(toolbar)
         self.chart = MultiSignalChart()
         self.plot = self.chart.widget
@@ -330,6 +343,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart.set_line_width(self.settings.value("chart/line_width", 1.4, type=float))
         self.chart.set_grid(self.settings.value("chart/grid", True, type=bool))
         self.chart.set_theme(self.settings.value("chart/theme", "深色", type=str))
+        self.chart.set_time_mode(self.time_mode_combo.currentData())
+        self.time_mode_combo.currentIndexChanged.connect(self._set_time_mode)
         right_layout.addWidget(self.chart, 1)
         self.display_panel = QtWidgets.QWidget()
         chart_controls = QtWidgets.QGridLayout(self.display_panel)
@@ -371,7 +386,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.curve_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
         self.curve_table.itemChanged.connect(self._curve_visibility_changed)
         self.curve_table.currentCellChanged.connect(self._curve_focus_changed)
-        self.curve_table.setMinimumHeight(280)
+        # Let the table give space to the controls below it in a short window.
+        self.curve_table.setMinimumHeight(96)
         self.curve_table.verticalHeader().hide()
         self.curve_table.verticalHeader().setDefaultSectionSize(35)
         self.curve_table.setColumnWidth(0, 45)
@@ -436,7 +452,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QWidget#inspectorPanel, QWidget#chartPanel, QWidget#recordingPanel,
             QWidget#signalPanel { background: #172337; border: 1px solid #2a3951;
                 border-radius: 12px; }
-            QWidget#timeCard { background: #223854; border-radius: 9px; }
+            QWidget#cursorReadout { background: #223854; border-radius: 7px; }
             QMenuBar, QMenu, QStatusBar { background: #111d2f; color: #dce7f5; }
             QMenuBar::item:selected, QMenu::item:selected { background: #28405d; }
             QTabWidget::pane { border: 0; background: #101a2b; }
@@ -467,7 +483,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QLabel#pageHeading { font-size: 20px; font-weight: 700; }
             QLabel#sectionHeading { font-size: 17px; font-weight: 700; }
             QLabel#mutedLabel { color: #93a4bd; }
-            QLabel#cursorTime { color: #e8effa; font-size: 26px; font-weight: 700; }
+            QLabel#cursorTime { color: #e8effa; font-size: 14px; font-weight: 700; }
             QLabel#fileBadge, QLabel#replayBadge { background: #1d2c42;
                 padding: 7px 12px; border-radius: 7px; }
             QLabel#replayBadge { background: #153c36; color: #66e1a7; }
@@ -713,8 +729,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.signal_list.blockSignals(True)
         for row in range(self.signal_list.count()):
             item = self.signal_list.item(row)
-            item.setCheckState(QtCore.Qt.CheckState.Checked if item.data(QtCore.Qt.ItemDataRole.UserRole) in chosen
-                               else QtCore.Qt.CheckState.Unchecked)
+            key = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            is_unresolved = bool(item.data(QtCore.Qt.ItemDataRole.UserRole + 1))
+            checked = (append and item.checkState() == QtCore.Qt.CheckState.Checked) if is_unresolved else key in chosen
+            item.setCheckState(QtCore.Qt.CheckState.Checked if checked else QtCore.Qt.CheckState.Unchecked)
         self.signal_list.blockSignals(False)
         self._update_config_signal_count()
         self._apply_signals()
@@ -781,6 +799,23 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lock_y.setChecked(False)
         self.chart.reset_auto_scale()
         self._refresh_plot(all_visible=True)
+
+    def _fit_xy(self) -> None:
+        if not self.files:
+            return
+        first, last = self.files[0].first, self.files[-1].last
+        span = last - first
+        padding = max(span * 0.03, 0.5 if span == 0 else 0.05)
+        origin = self.files[0].first
+        self.plot.setXRange(max(0, first - origin - padding), last - origin + padding, padding=0)
+        self.lock_y.setChecked(False)
+        self.chart.reset_auto_scale()
+        self._refresh_plot(all_visible=True)
+
+    def _set_time_mode(self, _index: int) -> None:
+        mode = self.time_mode_combo.currentData()
+        self.chart.set_time_mode(mode)
+        self.settings.setValue("chart/time_mode", mode)
 
     def _saved_y_ranges(self) -> dict[str, list[float]]:
         try:
@@ -864,10 +899,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _update_cursor_values(self, x_value: float) -> None:
         self.cursor_x = x_value
-        self.cursor_time_label.setText(f"{x_value:.3f} s")
+        self.cursor_time_label.setText(
+            cursor_clock_text(self.files[0].first + x_value) if self.files else "—"
+        )
         self.cursor_absolute_label.setText(
             clock_text(self.files[0].first + x_value) if self.files else "未载入记录文件"
         )
+        self.cursor_readout.setToolTip(self.cursor_absolute_label.text())
         low, high = self.plot.viewRange()[0]
         tolerance = max((high - low) * 0.05, 0.001)
         for row in range(self.curve_table.rowCount()):
@@ -910,6 +948,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.file_table.setItem(row, col, cell)
         self._refresh_channel_table()
         self.timeline.setValue(0)
+        self.chart.set_capture_origin(files[0].first)
         self.plot.setXRange(0, min(60, max(1, files[-1].last - files[0].first)), padding=0)
         self._reset_cache()
         self.statusBar().showMessage(f"已导入 {len(files)} 个文件，{sum(f.frames for f in files):,} 帧")
@@ -1051,11 +1090,10 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setCheckState(QtCore.Qt.CheckState.Checked if key in self.selected else QtCore.Qt.CheckState.Unchecked)
             self.signal_list.addItem(item)
         for key in sorted(self.unresolved_selected, key=lambda item: item.label()):
-            if key in self.signals:
-                continue
             item = QtWidgets.QListWidgetItem(f"[未解析] {key.label()}")
             item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
-            item.setFlags((item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable) & ~QtCore.Qt.ItemFlag.ItemIsEnabled)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, True)
+            item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(QtCore.Qt.CheckState.Checked)
             self.signal_list.addItem(item)
         self.signal_list.blockSignals(False)
@@ -1064,7 +1102,25 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _signal_selection_changed(self, _item: QtWidgets.QListWidgetItem) -> None:
         self._update_config_signal_count()
+        self._mark_project_dirty()
         self.signal_timer.start()
+
+    def _selection_from_list(self) -> tuple[set[SignalKey], dict[SignalKey, SignalReference]]:
+        chosen: set[SignalKey] = set()
+        unresolved: dict[SignalKey, SignalReference] = {}
+        for row in range(self.signal_list.count()):
+            item = self.signal_list.item(row)
+            if item.checkState() != QtCore.Qt.CheckState.Checked:
+                continue
+            key = item.data(QtCore.Qt.ItemDataRole.UserRole)
+            if item.data(QtCore.Qt.ItemDataRole.UserRole + 1):
+                if key in self.unresolved_selected:
+                    unresolved[key] = self.unresolved_selected[key]
+            elif key in self.signals:
+                chosen.add(key)
+        for key in chosen:
+            unresolved.pop(key, None)
+        return chosen, unresolved
 
     def _update_config_signal_count(self) -> None:
         chosen = sum(self.signal_list.item(row).checkState() == QtCore.Qt.CheckState.Checked
@@ -1078,12 +1134,12 @@ class MainWindow(QtWidgets.QMainWindow):
             item.setHidden(query not in item.text().lower())
 
     def _apply_signals(self) -> None:
-        chosen = {self.signal_list.item(row).data(QtCore.Qt.ItemDataRole.UserRole)
-                  for row in range(self.signal_list.count())
-                  if self.signal_list.item(row).checkState() == QtCore.Qt.CheckState.Checked
-                  and self.signal_list.item(row).data(QtCore.Qt.ItemDataRole.UserRole) in self.signals}
+        chosen, unresolved = self._selection_from_list()
         new = chosen - self.cached
         self.selected = chosen
+        if unresolved != self.unresolved_selected:
+            self.unresolved_selected = unresolved
+            self._populate_signals()
         self._mark_project_dirty()
         self._sync_curves()
         if new and self.files and self.played_until > self.files[0].first:
@@ -1156,10 +1212,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._launch(self.selected, start_at=self.playhead)
 
     def _apply_signals_without_backfill(self, mark_dirty: bool = True) -> None:
-        self.selected = {self.signal_list.item(row).data(QtCore.Qt.ItemDataRole.UserRole)
-                         for row in range(self.signal_list.count())
-                         if self.signal_list.item(row).checkState() == QtCore.Qt.CheckState.Checked
-                         and self.signal_list.item(row).data(QtCore.Qt.ItemDataRole.UserRole) in self.signals}
+        self.signal_timer.stop()
+        self.selected, self.unresolved_selected = self._selection_from_list()
         self._sync_curves()
         if mark_dirty:
             self._mark_project_dirty()
@@ -1192,7 +1246,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if self.follow.isChecked():
                 x = timestamp - self.files[0].first
                 window = self.follow_window.value()
-                self.plot.setXRange(max(0, x - window), max(window, x), padding=0)
+                self.plot.setXRange(max(0, x - window), max(1.0, x), padding=0)
             self.statusBar().showMessage(f"{self.files[file_index].path.name} · {processed:,}/{total:,} 帧")
 
     def _append_raw(self, rows: list[tuple]) -> None:
@@ -1219,13 +1273,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.replay_badge.setText("已停止")
         self.pause_button.setText("暂停")
         self._refresh_plot()
+        if complete and not backfill and self.follow.isChecked():
+            self._fit_xy()
         self._update_signal_notice()
 
     def _worker_finished(self, worker: ReplayWorker) -> None:
         if worker is self.worker:
             self.worker = None
             missing = self.selected - self.cached
-            if missing and self.files and self.played_until > self.files[0].first:
+            if worker.succeeded and missing and self.files and self.played_until > self.files[0].first:
                 self._set_signal_notice(f"正在补画 {len(missing)} 个新信号…")
                 self._launch(missing, backfill=True)
 
@@ -1330,6 +1386,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cursor_x = None
         self.cursor_time_label.setText("—")
         self.cursor_absolute_label.setText("移动到波形查看游标时间")
+        self.cursor_readout.setToolTip(self.cursor_absolute_label.text())
         self._set_signal_notice("")
         self.raw_table.setRowCount(0)
         self.progress.setValue(0)
@@ -1346,11 +1403,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.played_until = 0.0
         self.timeline.setValue(0)
         self.time_label.setText("—")
+        self.chart.set_capture_origin(None)
         self._reset_cache()
         self._refresh_channel_table()
         self.statusBar().showMessage("请选择 BLF 文件")
 
     def _clear(self) -> None:
+        self.signal_timer.stop()
         self._clear_recordings()
         self.mapping.clear()
         self.missing_mappings.clear()

@@ -4,9 +4,12 @@ import can
 import cantools
 import pytest
 
-from canflow.core import SignalKey, decode_selected, inspect_file, prepare_sequence
+from canflow.core import (
+    FileInfo, SignalKey, decode_selected, inspect_file, missing_signal_reason,
+    prepare_sequence, signal_definition_fingerprint, signal_unit,
+)
 from canflow.store import connect, plot_points, write_samples
-from canflow.workers import ReplayWorker
+from canflow.workers import ReplayWorker, ScanWorker
 
 
 def make_blf(path: Path, timestamps: list[float]) -> None:
@@ -38,6 +41,27 @@ def test_sequence_rejects_overlap(tmp_path: Path) -> None:
         prepare_sequence([first, second])
 
 
+def test_background_scan_uses_same_sequence_rules(tmp_path: Path) -> None:
+    first = tmp_path / "first.blf"
+    second = tmp_path / "second.blf"
+    make_blf(first, [1_700_000_000, 1_700_000_002])
+    make_blf(second, [1_700_000_002, 1_700_000_003])
+    worker = ScanWorker([second, first])
+    scanned = []
+    errors = []
+    worker.scanned.connect(scanned.append)
+    worker.failed.connect(errors.append)
+    worker.run()
+    assert errors == []
+    assert [item.path for item in scanned[0]] == [first, second]
+
+    make_blf(second, [1_700_000_001, 1_700_000_003])
+    worker = ScanWorker([first, second])
+    worker.failed.connect(errors.append)
+    worker.run()
+    assert "时间重叠" in errors[-1]
+
+
 def test_can_fd_frame_is_scanned(tmp_path: Path) -> None:
     path = tmp_path / "fd.blf"
     with can.BLFWriter(path) as writer:
@@ -64,6 +88,23 @@ def test_dbc_decode_only_selected_signal(tmp_path: Path) -> None:
     message = can.Message(timestamp=1_700_000_000, channel=1, arbitration_id=0x123, data=[10], is_extended_id=False)
     assert decode_selected(message, database, {key}) == [(key, 5.0)]
     assert decode_selected(message, None, {key}) == []
+
+
+def test_signal_lookup_respects_standard_vs_extended_frame(tmp_path: Path) -> None:
+    dbc = tmp_path / "extended.dbc"
+    dbc.write_text(
+        'VERSION ""\nNS_ :\nBS_: \nBU_: ECU\n'
+        'BO_ 2147483939 Extended: 8 ECU\n'
+        ' SG_ Speed : 40|8@1+ (1,0) [0|255] "km/h" ECU\n',
+        encoding="utf-8",
+    )
+    database = cantools.database.load_file(str(dbc))
+    key = SignalKey(1, 0x123, False, "Speed")
+    databases = {1: database}
+    info = FileInfo(tmp_path / "sample.blf", 0, 1, 1, (1,), ((1, 0x123, False, 1),))
+    assert signal_definition_fingerprint(key, databases) is None
+    assert signal_unit(key, databases) == ""
+    assert missing_signal_reason(key, [info], databases) == "未解码出样本，请检查 DBC 与报文内容"
 
 
 def test_store_preserves_extrema_in_visible_bins(tmp_path: Path) -> None:
@@ -97,6 +138,44 @@ def test_replay_worker_decodes_to_disk_and_reports_raw_frames(tmp_path: Path) ->
     assert len(updates[-1][4]) == 2
     connection = connect(cache)
     assert connection.execute("SELECT COUNT(*) FROM samples WHERE signal = ?", (key.storage_key(),)).fetchone()[0] == 2
+    connection.close()
+
+
+def test_replay_flushes_samples_without_flooding_progress(tmp_path: Path, monkeypatch) -> None:
+    blf = tmp_path / "many.blf"
+    make_blf(blf, [1_700_000_000 + index * 0.001 for index in range(4500)])
+    dbc = tmp_path / "one.dbc"
+    dbc.write_text(
+        'VERSION ""\nNS_ :\nBS_: \nBU_: ECU\n'
+        'BO_ 291 Example: 1 ECU\n SG_ Speed : 0|8@1+ (1,0) [0|255] "" ECU\n',
+        encoding="utf-8",
+    )
+    key = SignalKey(1, 0x123, False, "Speed")
+    cache = tmp_path / "samples.sqlite"
+    import canflow.workers as workers
+
+    writes = []
+    original_write = workers.write_samples
+
+    def record_write(connection, rows):
+        if rows:
+            writes.append(len(rows))
+        original_write(connection, rows)
+
+    monkeypatch.setattr(workers, "write_samples", record_write)
+    monkeypatch.setattr(workers.time, "monotonic", lambda: 100.0)
+    worker = ReplayWorker(prepare_sequence([blf]), {1: dbc}, {key}, cache)
+    updates = []
+    worker.advanced.connect(updates.append)
+    worker.run()
+    assert worker.succeeded
+    assert len(writes) >= 3
+    assert len(updates) == 1
+    assert updates[0][:3] == (0, 4500, 4500)
+    assert updates[0][3] == pytest.approx(1_700_000_004.499)
+    assert len(updates[0][4]) == 1000
+    connection = connect(cache)
+    assert connection.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 4500
     connection.close()
 
 

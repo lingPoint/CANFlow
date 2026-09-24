@@ -73,7 +73,11 @@ def prepare_sequence(paths: Iterable[Path]) -> list[FileInfo]:
     unique = list(dict.fromkeys(Path(p).resolve() for p in paths))
     if not unique:
         raise ValueError("请选择至少一个 BLF 文件")
-    files = [inspect_file(path) for path in unique]
+    return validate_sequence(inspect_file(path) for path in unique)
+
+
+def validate_sequence(files: Iterable[FileInfo]) -> list[FileInfo]:
+    files = list(files)
     files.sort(key=lambda info: (info.first, str(info.path).lower()))
     for previous, current in zip(files, files[1:]):
         if current.first < previous.last:
@@ -97,10 +101,7 @@ def available_signals(databases: dict[int, cantools.database.Database]) -> list[
     return keys
 
 
-def signal_definition_fingerprint(
-    key: SignalKey, databases: dict[int, cantools.database.Database]
-) -> str | None:
-    """Return a stable digest of the DBC definition behind a signal identity."""
+def _signal_definition(key: SignalKey, databases: dict[int, cantools.database.Database]):
     database = databases.get(key.channel)
     if database is None:
         return None
@@ -111,6 +112,17 @@ def signal_definition_fingerprint(
         signal = next(item for item in message.signals if item.name == key.name)
     except (KeyError, StopIteration):
         return None
+    return message, signal
+
+
+def signal_definition_fingerprint(
+    key: SignalKey, databases: dict[int, cantools.database.Database]
+) -> str | None:
+    """Return a stable digest of the DBC definition behind a signal identity."""
+    definition = _signal_definition(key, databases)
+    if definition is None:
+        return None
+    _, signal = definition
     definition = {
         "frame_id": key.frame_id,
         "extended": key.extended,
@@ -131,17 +143,8 @@ def signal_definition_fingerprint(
 
 
 def signal_unit(key: SignalKey, databases: dict[int, cantools.database.Database]) -> str:
-    database = databases.get(key.channel)
-    if database is None:
-        return ""
-    try:
-        message = database.get_message_by_frame_id(key.frame_id)
-        if message.is_extended_frame != key.extended:
-            return ""
-        signal = next(item for item in message.signals if item.name == key.name)
-        return signal.unit or ""
-    except (KeyError, StopIteration):
-        return ""
+    definition = _signal_definition(key, databases)
+    return definition[1].unit or "" if definition is not None else ""
 
 
 def missing_signal_reason(
@@ -154,17 +157,13 @@ def missing_signal_reason(
     if not lengths:
         return "BLF 中没有对应报文"
     longest = max(lengths)
-    database = databases.get(key.channel)
-    if database is not None:
-        try:
-            message = database.get_message_by_frame_id(key.frame_id)
-            signal = next(item for item in message.signals if item.name == key.name)
-            if signal.byte_order == "little_endian":
-                required = (signal.start + signal.length + 7) // 8
-                if required > longest:
-                    return f"DBC 需要至少 {required} 字节，BLF 该报文最长 {longest} 字节"
-        except (KeyError, StopIteration):
-            pass
+    definition = _signal_definition(key, databases)
+    if definition is not None:
+        _, signal = definition
+        if signal.byte_order == "little_endian":
+            required = (signal.start + signal.length + 7) // 8
+            if required > longest:
+                return f"DBC 需要至少 {required} 字节，BLF 该报文最长 {longest} 字节"
     return "未解码出样本，请检查 DBC 与报文内容"
 
 
