@@ -1,0 +1,81 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches:
+      - '**'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-dev.txt "pyinstaller>=6.10,<7"
+
+      - name: Run tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m pytest -q
+
+      - name: Build EXE
+        run: >-
+          python -m PyInstaller
+          --noconfirm
+          --clean
+          --onefile
+          --windowed
+          --name CANFlow
+          --add-data "canflow/assets;canflow/assets"
+          --specpath build
+          run.py
+
+      - name: Check EXE
+        shell: pwsh
+        run: |
+          if (-not (Test-Path -LiteralPath dist/CANFlow.exe)) {
+            throw 'PyInstaller did not create dist/CANFlow.exe'
+          }
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: CANFlow-windows-${{ github.sha }}
+          path: dist/CANFlow.exe
+          if-no-files-found: error
+
+      - name: Publish commit release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "build-$env:GITHUB_SHA"
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create $tag dist/CANFlow.exe `
+              --target $env:GITHUB_SHA `
+              --title "CANFlow $($env:GITHUB_SHA.Substring(0, 7))" `
+              --notes "Windows EXE built from commit $env:GITHUB_SHA." `
+              --prerelease `
+              --latest=false
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to publish release $tag"
+            }
+          }
+          gh release view $tag --json url --jq .url | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append
+
