@@ -41,6 +41,60 @@ def test_sequence_rejects_overlap(tmp_path: Path) -> None:
         prepare_sequence([first, second])
 
 
+def test_multichannel_timestamp_rollback_keeps_capture_times_and_file_bounds(tmp_path: Path) -> None:
+    first = tmp_path / "mixed.blf"
+    base = 1_790_336_051.127
+    frames = [
+        (base + 0.000010, 1, 10),
+        (base + 0.000612, 1, 11),
+        (base + 0.000609, 2, 12),
+        (base, 2, 13),
+        (base + 0.000300, 1, 14),
+    ]
+    with can.BLFWriter(first) as writer:
+        for timestamp, channel, value in frames:
+            writer.on_message_received(can.Message(
+                timestamp=timestamp, channel=channel, arbitration_id=0x123,
+                data=[value], is_extended_id=False,
+            ))
+    with can.BLFReader(first) as reader:
+        recorded = [(float(message.timestamp), int(message.channel), message.data[0]) for message in reader]
+    assert recorded[2][0] < recorded[1][0]  # The BLF actually retains the rollback.
+
+    info = inspect_file(first)
+    assert info.frames == len(frames)
+    assert info.channels == (1, 2)
+    assert info.first == min(item[0] for item in recorded)
+    assert info.last == max(item[0] for item in recorded)
+
+    scanned = []
+    scan_errors = []
+    scanner = ScanWorker([first])
+    scanner.scanned.connect(scanned.append)
+    scanner.failed.connect(scan_errors.append)
+    scanner.run()
+    assert scan_errors == []
+    assert scanned == [[info]]
+
+    cache = tmp_path / "samples.sqlite"
+    worker = ReplayWorker([info], {}, set(), cache)
+    updates = []
+    outcomes = []
+    worker.advanced.connect(updates.append)
+    worker.completed.connect(outcomes.append)
+    worker.run()
+    assert outcomes == [True]
+    assert updates[-1][1:4] == (len(frames), len(frames), info.last)
+    assert [(row[0], row[1], int(row[4], 16)) for row in updates[-1][4]] == recorded
+
+    second = tmp_path / "later.blf"
+    make_blf(second, [info.last + 0.000001])
+    assert [item.path for item in prepare_sequence([second, first])] == [first, second]
+    make_blf(second, [info.last - 0.000001])
+    with pytest.raises(ValueError, match="时间重叠"):
+        prepare_sequence([first, second])
+
+
 def test_background_scan_uses_same_sequence_rules(tmp_path: Path) -> None:
     first = tmp_path / "first.blf"
     second = tmp_path / "second.blf"

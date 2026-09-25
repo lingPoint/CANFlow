@@ -9,6 +9,7 @@ import can
 import pytest
 from PySide6 import QtCore, QtWidgets
 
+from canflow import __version__
 from canflow.app import MainWindow, cursor_clock_text
 from canflow.chart import MultiSignalChart
 from canflow.core import FileInfo, SignalKey
@@ -51,6 +52,56 @@ def test_window_replays_selected_signal(tmp_path: Path) -> None:
         assert window.raw_table.rowCount() == 2
         assert window.db.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 2
         assert window.plot.viewRange()[0][1] < 2
+    finally:
+        window.close()
+
+
+def test_window_replays_out_of_order_multichannel_timestamps(tmp_path: Path) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    base = 1_790_336_051.0
+    blf = tmp_path / "multichannel.blf"
+    with can.BLFWriter(blf) as writer:
+        for timestamp, channel, value in (
+            (base + 0.1, 1, 10),
+            (base + 1.0, 1, 11),
+            (base + 0.999997, 2, 12),
+            (base + 0.5, 2, 13),
+        ):
+            writer.on_message_received(can.Message(
+                timestamp=timestamp, channel=channel, arbitration_id=0x123,
+                data=[value], is_extended_id=False,
+            ))
+    dbc = tmp_path / "one.dbc"
+    dbc.write_text(
+        'VERSION ""\nNS_ :\nBS_: \nBU_: ECU\n'
+        'BO_ 291 Example: 1 ECU\n SG_ Speed : 0|8@1+ (1,0) [0|255] "km/h" ECU\n',
+        encoding="utf-8",
+    )
+    window = MainWindow()
+    try:
+        assert f"v{__version__}" in window.windowTitle()
+        assert any(label.text() == f"CANFlow v{__version__}" for label in window.findChildren(QtWidgets.QLabel))
+        info = prepare_sequence([blf])[0]
+        window._scan_done([info])
+        window.mapping = {1: dbc, 2: dbc}
+        window.signals = available_signals(load_databases(window.mapping))
+        window._populate_signals()
+        for row in range(window.signal_list.count()):
+            window.signal_list.item(row).setCheckState(QtCore.Qt.CheckState.Checked)
+        window._start()
+        deadline = time.monotonic() + 5
+        while window.worker is not None and time.monotonic() < deadline:
+            app.processEvents()
+            time.sleep(0.01)
+        app.processEvents()
+        window._refresh_plot()
+        assert window.worker is None
+        assert window.replay_badge.text() == "回放完成"
+        assert window.progress.value() == 1000
+        assert window.raw_table.rowCount() == 4
+        assert window.playhead == info.last
+        assert window.db.execute("SELECT COUNT(*) FROM samples").fetchone()[0] == 4
+        assert all(len(curve.xData) > 0 for curve in window.curves.values())
     finally:
         window.close()
 

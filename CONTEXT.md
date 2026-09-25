@@ -19,7 +19,7 @@ A time series of physical signal values decoded from recorded CAN or CAN FD fram
 The original timestamp axis shared by the playback sequence, including gaps between files.
 
 **Playback order**:
-The order of BLF files by the timestamp of each file's first frame.
+The order of BLF files by each file's earliest recorded CAN/CAN FD frame timestamp.
 
 **Channel DBC mapping**:
 The project-configured DBC path assigned to a CAN channel for decoding that channel whenever it appears in a playback sequence. The mapping exists independently of loaded BLF recordings.

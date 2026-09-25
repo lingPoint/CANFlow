@@ -9,6 +9,7 @@ from pathlib import Path
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
 
+from . import __version__
 from .chart import MultiSignalChart, signal_color
 from .core import (
     FileInfo, SignalKey, available_signals, load_databases, missing_signal_reason,
@@ -112,7 +113,7 @@ class MainWindow(QtWidgets.QMainWindow):
         brand_icon = QtWidgets.QLabel()
         brand_icon.setPixmap(logo_pixmap(32))
         header.addWidget(brand_icon)
-        brand = QtWidgets.QLabel("CANFlow")
+        brand = QtWidgets.QLabel(f"CANFlow v{__version__}")
         brand.setObjectName("brand")
         header.addWidget(brand)
         subtitle = QtWidgets.QLabel("BLF 波形回放")
@@ -507,7 +508,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _update_window_title(self) -> None:
         name = self.project_path.name if self.project_path else "未命名项目"
         marker = " *" if self.project_dirty else ""
-        self.setWindowTitle(f"CANFlow V2 · {name}{marker}")
+        self.setWindowTitle(f"CANFlow v{__version__} · {name}{marker}")
 
     def _mark_project_dirty(self) -> None:
         if not self.project_active:

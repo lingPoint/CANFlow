@@ -52,11 +52,8 @@ def inspect_file(path: Path, cancelled: Callable[[], bool] | None = None) -> Fil
             if not usable_frame(message):
                 continue
             timestamp = float(message.timestamp)
-            if last is not None and timestamp < last:
-                raise ValueError(f"{path.name}: 文件内时间戳倒退（{last:.6f} → {timestamp:.6f}）")
-            if first is None:
-                first = timestamp
-            last = timestamp
+            first = timestamp if first is None else min(first, timestamp)
+            last = timestamp if last is None else max(last, timestamp)
             count += 1
             if message.channel is not None:
                 channel = int(message.channel)

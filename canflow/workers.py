@@ -96,7 +96,7 @@ class ReplayWorker(QtCore.QThread):
                             continue
                         processed += 1
                         timestamp = float(message.timestamp)
-                        last_time = timestamp
+                        last_time = max(last_time, timestamp)
                         if self.start_at is not None and timestamp < self.start_at:
                             continue
                         channel = int(message.channel) if message.channel is not None else -1
