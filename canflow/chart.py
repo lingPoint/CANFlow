@@ -144,6 +144,7 @@ class CurveLayer:
     color: str
     view: pg.ViewBox
     curve: pg.PlotDataItem
+    samples: pg.ScatterPlotItem
     visible: bool = True
     range_initialized: bool = False
 
@@ -152,6 +153,7 @@ class MultiSignalChart(QtWidgets.QWidget):
     """One capture timeline with an independent ViewBox for every signal."""
 
     cursor_moved = QtCore.Signal(float)
+    measurement_clicked = QtCore.Signal(float)
     ranges_changed = QtCore.Signal()
 
     def __init__(self, parent=None):
@@ -160,7 +162,7 @@ class MultiSignalChart(QtWidgets.QWidget):
         self.focused: SignalKey | None = None
         self.auto_scale = True
         self.y_locked = False
-        self.line_width = 1.4
+        self.sample_emphasis = 2.5
         self.theme = "深色"
         self.master_view = TimelineViewBox(self.scale_visible_y)
         self.time_axis = CaptureTimeAxis()
@@ -178,6 +180,15 @@ class MultiSignalChart(QtWidgets.QWidget):
         self.cursor = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#94a3b8", width=1))
         self.cursor.hide()
         self.master_view.addItem(self.cursor, ignoreBounds=True)
+        self.marker_a = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#fbbf24", width=2),
+                                        label="A", labelOpts={"position": 0.95})
+        self.marker_b = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#fb7185", width=2),
+                                        label="B", labelOpts={"position": 0.95})
+        for marker in (self.marker_a, self.marker_b):
+            marker.hide()
+            self.master_view.addItem(marker, ignoreBounds=True)
+        self.measurement_enabled = False
+        self.widget.scene().sigMouseClicked.connect(self._mouse_clicked)
         self.widget.getPlotItem().vb.sigResized.connect(self._sync_geometry)
         self._mouse_proxy = pg.SignalProxy(
             self.widget.scene().sigMouseMoved, rateLimit=30, slot=self._mouse_moved
@@ -190,10 +201,13 @@ class MultiSignalChart(QtWidgets.QWidget):
         view.setMouseEnabled(x=False, y=False)
         self.widget.scene().addItem(view)
         view.setXLink(self.master_view)
-        curve = pg.PlotDataItem([], [], pen=pg.mkPen(color or signal_color(key), width=self.line_width),
+        curve = pg.PlotDataItem([], [], pen=pg.mkPen(color or signal_color(key), width=1),
                                 autoDownsample=True, clipToView=True)
         view.addItem(curve)
-        layer = CurveLayer(key, label, unit, color or signal_color(key), view, curve)
+        samples = pg.ScatterPlotItem([], [], symbol="o", size=self._sample_size(),
+                                     pen=None, brush=pg.mkBrush(color or signal_color(key)))
+        view.addItem(samples)
+        layer = CurveLayer(key, label, unit, color or signal_color(key), view, curve, samples)
         self.layers[key] = layer
         self._sync_geometry()
         if self.focused is None:
@@ -205,6 +219,7 @@ class MultiSignalChart(QtWidgets.QWidget):
         if layer is None:
             return
         layer.view.removeItem(layer.curve)
+        layer.view.removeItem(layer.samples)
         self.widget.scene().removeItem(layer.view)
         if self.focused == key:
             self.focused = next(iter(self.layers), None)
@@ -248,11 +263,14 @@ class MultiSignalChart(QtWidgets.QWidget):
             self._link_focus_axis()
         self._sync_geometry()
 
-    def set_data(self, key: SignalKey, x: list[float], y: list[float]) -> None:
+    def set_data(self, key: SignalKey, x: list[float], y: list[float],
+                 sample_x: list[float] | None = None, sample_y: list[float] | None = None) -> None:
         layer = self.layers.get(key)
         if layer is None:
             return
         layer.curve.setData(x, y)
+        layer.samples.setData(x if sample_x is None else sample_x,
+                              y if sample_y is None else sample_y)
         if self.auto_scale and (not self.y_locked or not layer.range_initialized):
             self._fit_layer_y(layer)
         self._update_axis(layer)
@@ -289,10 +307,30 @@ class MultiSignalChart(QtWidgets.QWidget):
         self.axis_panel.update()
         self.ranges_changed.emit()
 
-    def set_line_width(self, width: float) -> None:
-        self.line_width = width
+    def set_sample_emphasis(self, width: float) -> None:
+        self.sample_emphasis = width
         for layer in self.layers.values():
-            layer.curve.setPen(pg.mkPen(layer.color, width=width))
+            layer.samples.setSize(self._sample_size())
+
+    def _sample_size(self) -> float:
+        return 2 + 2 * self.sample_emphasis
+
+    def set_measure_markers(self, a: float | None, b: float | None) -> None:
+        for marker, position in ((self.marker_a, a), (self.marker_b, b)):
+            if position is None:
+                marker.hide()
+            else:
+                marker.setPos(position)
+                marker.show()
+
+    def _mouse_clicked(self, event) -> None:
+        if not self.measurement_enabled or event.button() != QtCore.Qt.MouseButton.LeftButton:
+            return
+        position = event.scenePos()
+        if not self.master_view.sceneBoundingRect().contains(position):
+            return
+        self.measurement_clicked.emit(float(self.master_view.mapSceneToView(position).x()))
+        event.accept()
 
     def set_grid(self, visible: bool) -> None:
         self.widget.showGrid(x=visible, y=visible, alpha=0.2)

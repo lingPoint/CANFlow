@@ -19,8 +19,8 @@ from .persistence import (
     DbcReference, SignalGroup, SignalGroupStore, SignalReference, export_signal_group, import_signal_group,
     load_project, make_signal_references, resolve_dbc_reference, save_project,
 )
-from .store import connect, nearest_sample, plot_points
-from .workers import ReplayWorker, ScanWorker
+from .store import connect, nearest_sample, plot_points_with_samples
+from .workers import ReplayWorker, ScanCache, ScanWorker
 
 
 def logo_pixmap(size: int) -> QtGui.QPixmap:
@@ -40,6 +40,10 @@ def clock_text(timestamp: float) -> str:
 def cursor_clock_text(timestamp: float) -> str:
     moment = datetime.fromtimestamp(timestamp)
     return f"{moment:%H点%M分%S秒}{moment.microsecond // 1000}毫秒"
+
+
+def sample_clock_text(timestamp: float) -> str:
+    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -63,12 +67,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cached: set[SignalKey] = set()
         self.worker: ReplayWorker | None = None
         self.scanner: ScanWorker | None = None
+        self.scan_cache = ScanCache()
         self.cache_dir = tempfile.TemporaryDirectory(prefix="canflow-")
         self.cache_path = Path(self.cache_dir.name) / "samples.sqlite"
         self.db = connect(self.cache_path)
         self.curves: dict[SignalKey, pg.PlotDataItem] = {}
         self.curve_data: dict[SignalKey, tuple[list[float], list[float]]] = {}
+        self._plot_versions: dict[SignalKey, tuple] = {}
         self.cursor_x: float | None = None
+        self.measure_key: SignalKey | None = None
+        self.measure_a: tuple[float, float] | None = None
+        self.measure_b: tuple[float, float] | None = None
         self.settings = QtCore.QSettings("CANFlow", "CANFlow")
         config_dir = Path(QtCore.QStandardPaths.writableLocation(
             QtCore.QStandardPaths.StandardLocation.AppConfigLocation
@@ -88,6 +97,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.plot_timer.setInterval(500)
         self.plot_timer.timeout.connect(self._refresh_plot)
         self.plot_timer.start()
+        self.progress_timer = QtCore.QTimer(self)
+        self.progress_timer.setInterval(100)
+        self.progress_timer.timeout.connect(self._poll_replay)
+        self.progress_timer.start()
 
     def _build_ui(self) -> None:
         file_menu = self.menuBar().addMenu("项目")
@@ -355,12 +368,37 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart = MultiSignalChart()
         self.plot = self.chart.widget
         self.chart.cursor_moved.connect(self._update_cursor_values)
-        self.chart.set_line_width(self.settings.value("chart/line_width", 1.4, type=float))
+        self.chart.measurement_clicked.connect(self._measure_at)
+        saved_sample_emphasis = self.settings.value(
+            "chart/sample_emphasis", self.settings.value("chart/line_width", 2.5, type=float), type=float
+        )
+        self.chart.set_sample_emphasis(saved_sample_emphasis)
         self.chart.set_grid(self.settings.value("chart/grid", True, type=bool))
         self.chart.set_theme(self.settings.value("chart/theme", "深色", type=str))
         self.chart.set_time_mode(self.time_mode_combo.currentData())
         self.time_mode_combo.currentIndexChanged.connect(self._set_time_mode)
         right_layout.addWidget(self.chart, 1)
+        measure_bar = QtWidgets.QHBoxLayout()
+        right_layout.addLayout(measure_bar)
+        self.measure_toggle = QtWidgets.QPushButton("测量采样间隔")
+        self.measure_toggle.setCheckable(True)
+        self.measure_toggle.setToolTip("选择左侧信号后，在波形上依次点击两个采样点")
+        self.measure_toggle.toggled.connect(self._set_measurement_enabled)
+        measure_bar.addWidget(self.measure_toggle)
+        clear_measure = QtWidgets.QPushButton("清除标记")
+        clear_measure.clicked.connect(self._clear_measurement)
+        measure_bar.addWidget(clear_measure)
+        self.measure_label = QtWidgets.QLabel("选择信号，开启测量后在波形上点击两次")
+        self.measure_label.setObjectName("mutedLabel")
+        measure_bar.addWidget(self.measure_label, 1)
+        measure_bar.addWidget(QtWidgets.QLabel("采样点粗细"))
+        self.sample_emphasis = QtWidgets.QDoubleSpinBox()
+        self.sample_emphasis.setRange(0.5, 8.0)
+        self.sample_emphasis.setSingleStep(0.5)
+        self.sample_emphasis.setValue(saved_sample_emphasis)
+        self.sample_emphasis.setToolTip("只加粗有数据帧的采样点；连接线保持细线")
+        self.sample_emphasis.valueChanged.connect(self._set_sample_emphasis)
+        measure_bar.addWidget(self.sample_emphasis)
         self.display_panel = QtWidgets.QWidget()
         chart_controls = QtWidgets.QGridLayout(self.display_panel)
         chart_controls.setContentsMargins(0, 6, 0, 6)
@@ -377,13 +415,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.chart.y_locked = self.lock_y.isChecked()
         self.lock_y.toggled.connect(self._set_y_locked)
         chart_controls.addWidget(self.lock_y, 1, 2)
-        chart_controls.addWidget(QtWidgets.QLabel("线宽"), 2, 0)
-        self.line_width = QtWidgets.QDoubleSpinBox()
-        self.line_width.setRange(0.5, 5.0)
-        self.line_width.setSingleStep(0.25)
-        self.line_width.setValue(self.settings.value("chart/line_width", 1.4, type=float))
-        self.line_width.valueChanged.connect(self._set_line_width)
-        chart_controls.addWidget(self.line_width, 2, 1)
         self.grid_toggle = QtWidgets.QCheckBox("网格")
         self.grid_toggle.setChecked(self.settings.value("chart/grid", True, type=bool))
         self.grid_toggle.toggled.connect(self._set_grid)
@@ -392,8 +423,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.theme_combo.addItems(["深色", "浅色"])
         self.theme_combo.setCurrentText(self.settings.value("chart/theme", "深色", type=str))
         self.theme_combo.currentTextChanged.connect(self._set_theme)
-        chart_controls.addWidget(QtWidgets.QLabel("主题"), 3, 0)
-        chart_controls.addWidget(self.theme_combo, 3, 1, 1, 2)
+        chart_controls.addWidget(QtWidgets.QLabel("主题"), 2, 0)
+        chart_controls.addWidget(self.theme_combo, 2, 1)
         self.curve_table = QtWidgets.QTableWidget(0, 3)
         self.curve_table.setHorizontalHeaderLabels(["显示", "信号", "当前值"])
         self.curve_table.horizontalHeader().setStretchLastSection(True)
@@ -426,7 +457,7 @@ class MainWindow(QtWidgets.QMainWindow):
         details_visible = self.settings.value("layout/playback_details_visible", False, type=bool)
         self.details_toggle.setChecked(details_visible)
         self.details_toggle.toggled.connect(self._set_playback_details_visible)
-        self.display_panel.layout().addWidget(self.details_toggle, 4, 0, 1, 3)
+        self.display_panel.layout().addWidget(self.details_toggle, 3, 0, 1, 3)
 
         self.playback_details = QtWidgets.QWidget()
         details_layout = QtWidgets.QVBoxLayout(self.playback_details)
@@ -839,9 +870,9 @@ class MainWindow(QtWidgets.QMainWindow):
         except (TypeError, ValueError):
             return {}
 
-    def _set_line_width(self, width: float) -> None:
-        self.chart.set_line_width(width)
-        self.settings.setValue("chart/line_width", width)
+    def _set_sample_emphasis(self, width: float) -> None:
+        self.chart.set_sample_emphasis(width)
+        self.settings.setValue("chart/sample_emphasis", width)
 
     def _set_grid(self, visible: bool) -> None:
         self.chart.set_grid(visible)
@@ -895,6 +926,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if isinstance(key, SignalKey):
             visible = item.checkState() == QtCore.Qt.CheckState.Checked
             self.chart.set_visible(key, visible)
+            if not visible and self.measure_key == key:
+                self._clear_measurement()
             self._update_curve_summary()
             if visible:
                 self._refresh_plot()
@@ -909,8 +942,56 @@ class MainWindow(QtWidgets.QMainWindow):
                 if not self.chart.layers[key].visible:
                     item.setCheckState(QtCore.Qt.CheckState.Checked)
                 self.chart.focus(key)
+                if self.measure_key is not None and self.measure_key != key:
+                    self._clear_measurement()
                 if self.cursor_x is not None:
                     self._update_cursor_values(self.cursor_x)
+
+    def _set_measurement_enabled(self, enabled: bool) -> None:
+        self.chart.measurement_enabled = enabled
+        self._clear_measurement()
+
+    def _clear_measurement(self) -> None:
+        self.measure_key = None
+        self.measure_a = None
+        self.measure_b = None
+        self.chart.set_measure_markers(None, None)
+        self.measure_label.setText(
+            "选择信号后点击第一个采样点" if self.chart.measurement_enabled
+            else "选择信号，开启测量后在波形上点击两次"
+        )
+        self.measure_label.setToolTip("")
+
+    def _measure_at(self, x_value: float) -> None:
+        if not self.chart.measurement_enabled or not self.files:
+            return
+        key = self.chart.focused
+        if key is None or key not in self.chart.layers or not self.chart.layers[key].visible:
+            self.measure_label.setText("请先在左侧选择并显示一个信号")
+            return
+        origin = self.files[0].first
+        sample = nearest_sample(self.db, key.storage_key(), origin + x_value)
+        low, high = self.plot.viewRange()[0]
+        if sample is None or not origin + low <= sample[0] <= origin + high:
+            self.measure_label.setText(f"{key.name} 当前视野内暂无采样点")
+            return
+        if self.measure_a is None or self.measure_b is not None or self.measure_key != key:
+            self.measure_key = key
+            self.measure_a = sample
+            self.measure_b = None
+            self.chart.set_measure_markers(sample[0] - origin, None)
+            self.measure_label.setText(f"{key.name} · A {sample_clock_text(sample[0])} · 点击第二个采样点")
+            self.measure_label.setToolTip(f"A = {sample[1]:.6g}，时间 {sample_clock_text(sample[0])}")
+            return
+        self.measure_b = sample
+        self.chart.set_measure_markers(self.measure_a[0] - origin, sample[0] - origin)
+        seconds = abs(sample[0] - self.measure_a[0])
+        interval = f"{seconds * 1000:.3f} ms" if seconds < 1 else f"{seconds:.6f} s"
+        self.measure_label.setText(f"{key.name} · Δt {interval}")
+        self.measure_label.setToolTip(
+            f"A {sample_clock_text(self.measure_a[0])} = {self.measure_a[1]:.6g}；"
+            f"B {sample_clock_text(sample[0])} = {sample[1]:.6g}；间隔 {interval}"
+        )
 
     def _update_cursor_values(self, x_value: float) -> None:
         self.cursor_x = x_value
@@ -942,7 +1023,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("正在预检文件时间范围和通道…")
         self.add_files.setEnabled(False)
         self.clear_files.setEnabled(False)
-        self.scanner = ScanWorker(merged)
+        self.scanner = ScanWorker(merged, self.scan_cache)
         self.scanner.scanned.connect(self._scan_done)
         self.scanner.failed.connect(self._scan_failed)
         self.scanner.finished.connect(self._scan_finished)
@@ -1169,12 +1250,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._update_signal_notice()
 
     def _sync_curves(self) -> None:
+        if self.measure_key is not None and self.measure_key not in self.selected:
+            self._clear_measurement()
         visible = {key: layer.visible for key, layer in self.chart.layers.items()}
         for key in list(self.curves):
             if key not in self.selected:
                 self.chart.remove_signal(key)
                 self.curves.pop(key)
                 self.curve_data.pop(key, None)
+                self._plot_versions.pop(key, None)
         try:
             databases = load_databases(self.mapping)
         except Exception:
@@ -1234,7 +1318,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._mark_project_dirty()
 
     def _launch(self, signals: set[SignalKey], start_at: float | None = None, backfill: bool = False) -> None:
-        self.worker = ReplayWorker(self.files, self.mapping.copy(), signals.copy(), self.cache_path, start_at, backfill)
+        self.worker = ReplayWorker(self.files, self.mapping.copy(), signals.copy(), self.cache_path,
+                                   start_at, backfill, poll_updates=True)
         worker = self.worker
         worker.advanced.connect(lambda data: self._advanced(worker, data))
         worker.failed.connect(lambda error: self._worker_failed(worker, error))
@@ -1243,6 +1328,12 @@ class MainWindow(QtWidgets.QMainWindow):
         worker.start()
         self.replay_badge.setText("补画中" if backfill else "回放中")
         self.statusBar().showMessage("正在补画信号…" if backfill else "正在回放…")
+
+    def _poll_replay(self) -> None:
+        if self.worker:
+            data = self.worker.take_update()
+            if data is not None:
+                self._advanced(self.worker, data)
 
     def _advanced(self, worker: ReplayWorker, data: tuple) -> None:
         if worker is not self.worker:
@@ -1265,19 +1356,28 @@ class MainWindow(QtWidgets.QMainWindow):
             self.statusBar().showMessage(f"{self.files[file_index].path.name} · {processed:,}/{total:,} 帧")
 
     def _append_raw(self, rows: list[tuple]) -> None:
-        for timestamp, channel, frame_id, kind, data in rows:
-            row = self.raw_table.rowCount()
-            self.raw_table.insertRow(row)
-            for col, value in enumerate((clock_text(timestamp), str(channel), f"0x{frame_id:X}", kind, data)):
-                self.raw_table.setItem(row, col, QtWidgets.QTableWidgetItem(value))
-        while self.raw_table.rowCount() > 1000:
-            self.raw_table.removeRow(0)
-        if rows:
-            self.raw_table.scrollToBottom()
+        # The worker supplies a rolling snapshot, so reuse cells instead of
+        # allocating and shifting thousands of table rows on every update.
+        rows = rows[-1000:]
+        self.raw_table.setUpdatesEnabled(False)
+        try:
+            self.raw_table.setRowCount(len(rows))
+            for row, (timestamp, channel, frame_id, kind, data) in enumerate(rows):
+                for col, value in enumerate((clock_text(timestamp), str(channel), f"0x{frame_id:X}", kind, data)):
+                    cell = self.raw_table.item(row, col)
+                    if cell is None:
+                        self.raw_table.setItem(row, col, QtWidgets.QTableWidgetItem(value))
+                    elif cell.text() != value:
+                        cell.setText(value)
+            if rows:
+                self.raw_table.scrollToBottom()
+        finally:
+            self.raw_table.setUpdatesEnabled(True)
 
     def _completed(self, worker: ReplayWorker, complete: bool, signals: set[SignalKey], backfill: bool) -> None:
         if worker is not self.worker:
             return
+        self._poll_replay()
         if complete:
             if backfill or worker.start_at is None or worker.start_at <= self.files[0].first:
                 self.cached |= signals
@@ -1350,6 +1450,7 @@ class MainWindow(QtWidgets.QMainWindow):
             worker = self.worker
             worker.stop()
             worker.wait()
+            self._poll_replay()
             self.worker = None
             self.pause_button.setText("暂停")
             self.replay_badge.setText("已停止")
@@ -1375,6 +1476,8 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         origin = self.files[0].first
         low, high = self.plot.viewRange()[0]
+        version = (origin, low, high, self.db.execute("PRAGMA data_version").fetchone()[0],
+                   self.db.total_changes)
         visible_keys = [key for key in self.curves if self.chart.layers[key].visible]
         if not visible_keys:
             return
@@ -1383,14 +1486,20 @@ class MainWindow(QtWidgets.QMainWindow):
         keys = [visible_keys[(offset + index) % len(visible_keys)] for index in range(batch_size)]
         self._plot_refresh_offset = (offset + batch_size) % len(visible_keys)
         for key in keys:
-            x, y = plot_points(self.db, key.storage_key(), origin + max(0, low), origin + high)
+            if not all_visible and self._plot_versions.get(key) == version:
+                continue
+            x, y, sample_x, sample_y = plot_points_with_samples(
+                self.db, key.storage_key(), origin + max(0, low), origin + high
+            )
             relative_x = [value - origin for value in x]
             self.curve_data[key] = (relative_x, y)
-            self.chart.set_data(key, relative_x, y)
+            self.chart.set_data(key, relative_x, y, [value - origin for value in sample_x], sample_y)
+            self._plot_versions[key] = version
         if self.cursor_x is not None:
             self._update_cursor_values(self.cursor_x)
 
     def _reset_cache(self) -> None:
+        self._clear_measurement()
         self.db.close()
         self.cache_dir.cleanup()
         self.cache_dir = tempfile.TemporaryDirectory(prefix="canflow-")
@@ -1398,6 +1507,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.db = connect(self.cache_path)
         self.cached.clear()
         self.curve_data.clear()
+        self._plot_versions.clear()
         self.cursor_x = None
         self.cursor_time_label.setText("—")
         self.cursor_absolute_label.setText("移动到波形查看游标时间")
@@ -1405,8 +1515,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_signal_notice("")
         self.raw_table.setRowCount(0)
         self.progress.setValue(0)
-        for curve in self.curves.values():
+        for key, curve in self.curves.items():
             curve.setData([], [])
+            self.chart.layers[key].samples.setData([], [])
 
     def _clear_recordings(self) -> None:
         self._stop()
