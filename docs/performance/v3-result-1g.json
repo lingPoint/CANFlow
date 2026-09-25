@@ -1,0 +1,21 @@
+{
+  "label": "final1g",
+  "python": "3.12.14",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "bytes": 1074790480,
+  "frames": 9840000,
+  "channels": 16,
+  "decoded_samples": 9840000,
+  "scan_seconds": 29.356116199996904,
+  "replay_seconds": 66.05442400000175,
+  "frames_per_second": 148968.06911827344,
+  "overview_16_seconds": 0.07446190000337083,
+  "zoom_16_seconds": 0.003549599990947172,
+  "peak_rss_mib": 151.28125,
+  "rss_growth_mib": 107.99609375,
+  "cache_bytes": 352854016,
+  "ui_replay_seconds": 115.83791309999651,
+  "ui_heartbeat_max_seconds": 0.41287269999156706,
+  "ui_heartbeat_p99_seconds": 0.2879347999987658,
+  "ui_visible_tracks": 16
+}

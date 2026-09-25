@@ -86,7 +86,73 @@ def validate_sequence(files: Iterable[FileInfo]) -> list[FileInfo]:
 
 
 def load_databases(mapping: dict[int, Path]) -> dict[int, cantools.database.Database]:
-    return {channel: cantools.database.load_file(str(path)) for channel, path in mapping.items()}
+    # Several channels often share one DBC. Parse/compile it once per operation.
+    loaded = {}
+    result = {}
+    for channel, path in mapping.items():
+        path = path.resolve()
+        if path not in loaded:
+            loaded[path] = cantools.database.load_file(str(path))
+        result[channel] = loaded[path]
+    return result
+
+
+def prepare_decoders(databases: dict[int, cantools.database.Database], selected: set[SignalKey]) -> dict:
+    """Bind message lookup and storage identities once, outside the frame loop.
+
+    Common Intel integer signals use precomputed bit slices and cantools' own
+    scaling conversion. Float, multiplexed and Motorola definitions retain the
+    general cantools decoder. Truncation checks apply per selected signal.
+    """
+    groups = {}
+    for key in selected:
+        groups.setdefault((key.channel, key.frame_id, key.extended), []).append(key)
+    result = {}
+    for identity, keys in groups.items():
+        database = databases.get(identity[0])
+        if database is None:
+            continue
+        try:
+            definition = database.get_message_by_frame_id(identity[1])
+        except KeyError:
+            continue
+        if definition.is_extended_frame != identity[2]:
+            continue
+        names = tuple((key.name, key.storage_key()) for key in keys)
+        by_name = {signal.name: signal for signal in definition.signals}
+        signals = [(by_name[name], storage) for name, storage in names if name in by_name]
+        if (not definition.is_container and not definition.is_multiplexed()
+                and all(signal.byte_order == "little_endian" and not signal.is_float
+                        for signal, _ in signals)):
+            slices = tuple((signal.start // 8, (signal.start + signal.length + 7) // 8,
+                            signal.start % 8, (1 << signal.length) - 1,
+                            (1 << (signal.length - 1)) if signal.is_signed else 0,
+                            storage, signal.conversion.raw_to_scaled) for signal, storage in signals)
+
+            def decode_ints(data, slices=slices):
+                values = []
+                for begin, end, shift, mask, sign, storage, convert in slices:
+                    if end > len(data):
+                        continue
+                    raw = (int.from_bytes(data[begin:end], "little") >> shift) & mask
+                    if raw & sign:
+                        raw -= mask + 1
+                    values.append((storage, float(convert(raw, False))))
+                return values
+
+            result[identity] = decode_ints
+            continue
+
+        def decode(data, decode_message=definition.decode, names=names):
+            try:
+                values = decode_message(data, decode_choices=False, allow_truncated=True)
+            except (ValueError, KeyError, cantools.database.DecodeError):
+                return []
+            return [(storage, float(values[name])) for name, storage in names
+                    if isinstance(values.get(name), (int, float)) and not isinstance(values[name], bool)]
+
+        result[identity] = decode
+    return result
 
 
 def available_signals(databases: dict[int, cantools.database.Database]) -> list[SignalKey]:

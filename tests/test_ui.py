@@ -7,7 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import can
 import pytest
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtTest, QtWidgets
 
 from canflow import __version__
 from canflow.app import MainWindow, cursor_clock_text
@@ -16,6 +16,57 @@ from canflow.core import FileInfo, SignalKey
 from canflow.core import available_signals, load_databases, prepare_sequence
 from canflow.persistence import SignalReference, load_project, save_project
 from canflow.workers import ReplayWorker
+
+
+def test_plot_refresh_skips_unchanged_data_and_not_new_samples(tmp_path, monkeypatch):
+    from canflow.store import write_samples, connect
+    import canflow.app as module
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow()
+    try:
+        key = SignalKey(1, 1, False, "Value")
+        window.files = [FileInfo(tmp_path / "s.blf", 1000, 1010, 2, (1,))]
+        window.selected = {key}
+        window._sync_curves()
+        window.plot.setXRange(0, 10, padding=0)
+        write_samples(window.db, [(key.storage_key(), 1001., 10.)])
+        calls = []
+        original = module.plot_points_with_samples
+
+        def counted(*args, **kwargs):
+            calls.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(module, "plot_points_with_samples", counted)
+        window._refresh_plot()
+        window._refresh_plot()
+        assert len(calls) == 1
+        writer = connect(window.cache_path)
+        write_samples(writer, [(key.storage_key(), 1002., 20.)])
+        writer.close()
+        window._refresh_plot()
+        assert len(calls) == 2
+        assert 20. in window.curves[key].yData
+        window.plot.setXRange(0, 5, padding=0)
+        window._refresh_plot()
+        assert len(calls) == 3
+    finally:
+        window.close()
+
+
+def test_raw_snapshot_reuses_cells_and_does_not_duplicate_rows():
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow()
+    try:
+        rows = [(1700000000 + i, i % 16 + 1, 0x123, "CAN", "01") for i in range(1000)]
+        window._append_raw(rows)
+        cell = window.raw_table.item(999, 0)
+        window._append_raw(rows)
+        assert window.raw_table.rowCount() == 1000
+        assert window.raw_table.item(999, 0) is cell
+        assert window.raw_table.item(999, 1).text() == "8"
+    finally:
+        window.close()
 
 
 def test_window_replays_selected_signal(tmp_path: Path) -> None:
@@ -213,6 +264,82 @@ def test_chart_scales_independent_y_ranges_together() -> None:
     assert before[first] != before[second]
     chart.close()
     app.processEvents()
+
+
+def test_visible_sample_control_thickens_only_real_samples(tmp_path: Path) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow()
+    try:
+        window.plot_timer.stop()
+        window.settings = QtCore.QSettings(str(tmp_path / "settings.ini"), QtCore.QSettings.Format.IniFormat)
+        window.sample_emphasis.setValue(1.4)
+        first = SignalKey(1, 1, False, "First")
+        second = SignalKey(1, 2, False, "Second")
+        window.selected = {first, second}
+        window._sync_curves()
+        window.show()
+        app.processEvents()
+        assert window.sample_emphasis.isVisibleTo(window.pages)
+        assert window.display_panel.isHidden()
+        window.sample_emphasis.setValue(3.5)
+        assert window.chart.layers[first].curve.opts["pen"].widthF() == pytest.approx(1.0)
+        assert window.chart.layers[second].curve.opts["pen"].widthF() == pytest.approx(1.0)
+        assert window.chart.layers[first].samples.opts["size"] == pytest.approx(9.0)
+        assert window.chart.layers[second].samples.opts["size"] == pytest.approx(9.0)
+        window.chart.remove_signal(first)
+        window.curves.pop(first)
+        window._sync_curves()
+        assert window.chart.layers[first].samples.opts["size"] == pytest.approx(9.0)
+        window.settings.sync()
+        assert window.settings.value("chart/sample_emphasis", type=float) == pytest.approx(3.5)
+    finally:
+        window.close()
+        app.processEvents()
+
+
+def test_measurement_uses_focused_signal_samples_and_clears_with_recording(tmp_path: Path) -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow()
+    try:
+        window.plot_timer.stop()
+        first = SignalKey(1, 1, False, "First")
+        second = SignalKey(1, 2, False, "Second")
+        window.files = [FileInfo(tmp_path / "sample.blf", 1000, 1010, 3, (1,))]
+        window.selected = {first, second}
+        window._sync_curves()
+        window.db.executemany("INSERT INTO samples VALUES (?, ?, ?)", [
+            (first.storage_key(), 1001.0, 10),
+            (first.storage_key(), 1001.025, 20),
+            (second.storage_key(), 1001.012, 30),
+        ])
+        window.db.commit()
+        window.curve_table.setCurrentCell(0, 1)
+        assert window.chart.focused == first
+        window.show()
+        window.plot.setXRange(0, 10, padding=0)
+        window._refresh_plot(all_visible=True)
+        app.processEvents()
+        sample_x, sample_y = window.chart.layers[first].samples.getData()
+        assert list(sample_x) == pytest.approx([1.0, 1.025])
+        assert list(sample_y) == pytest.approx([10, 20])
+        window.measure_toggle.setChecked(True)
+        for x in (1.002, 1.024):
+            scene_point = window.chart.master_view.mapViewToScene(QtCore.QPointF(x, 0))
+            viewport_point = window.chart.widget.mapFromScene(scene_point)
+            QtTest.QTest.mouseClick(window.chart.widget.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                                    pos=viewport_point)
+            app.processEvents()
+        assert "25" in window.measure_label.text()
+        assert window.chart.marker_a.isVisible()
+        assert window.chart.marker_b.isVisible()
+        assert window.chart.marker_a.value() == pytest.approx(1.0)
+        assert window.chart.marker_b.value() == pytest.approx(1.025)
+        window._clear_recordings()
+        assert not window.chart.marker_a.isVisible()
+        assert not window.chart.marker_b.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
 
 
 def test_auto_y_immediately_restores_existing_curves() -> None:

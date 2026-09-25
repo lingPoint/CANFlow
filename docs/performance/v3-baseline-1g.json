@@ -1,0 +1,15 @@
+{
+  "label": "native-baseline1g",
+  "bytes": 1074790480,
+  "frames": 9840000,
+  "channels": 16,
+  "decoded_samples": 9840000,
+  "scan_seconds": 29.045900700002676,
+  "replay_seconds": 90.35510169999907,
+  "frames_per_second": 108903.64589119932,
+  "overview_16_seconds": 4.032832600001711,
+  "zoom_16_seconds": 0.0022452999983215705,
+  "peak_rss_mib": 53.34375,
+  "rss_growth_mib": 9.99609375,
+  "cache_bytes": 323235840
+}

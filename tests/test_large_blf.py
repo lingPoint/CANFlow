@@ -17,6 +17,16 @@ from canflow.workers import ReplayWorker
 from scripts.generate_multichannel_blf import fixture_paths, generate_multichannel_blf
 
 
+@pytest.mark.skipif(os.environ.get("CANFLOW_TEST_16CH") != "1", reason="opt-in dense 16-channel 1 GiB benchmark")
+def test_dense_sixteen_channel_gib_replay_and_responsive_ui(large_workspace: Path) -> None:
+    from scripts.benchmark_v3 import benchmark
+    result = benchmark(large_workspace, 1024, "dense16", ui=True)
+    assert result["bytes"] >= 1 << 30
+    assert result["decoded_samples"] == result["frames"]
+    assert result["ui_visible_tracks"] == 16
+    assert result["rss_growth_mib"] < 512
+
+
 def _working_set_bytes() -> int:
     """Read Windows process RSS without adding a benchmark-only dependency."""
     import ctypes
