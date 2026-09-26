@@ -498,9 +498,12 @@ def test_replacing_dbc_preserves_incompatible_selection_as_unresolved(tmp_path: 
     window = MainWindow()
     try:
         window._assign_dbc_path(first, 1)
+        from tests.test_import_performance import wait_import
+        wait_import(app, window)
         window.selected = {key}
         window._populate_signals()
         window._assign_dbc_path(second, 1)
+        wait_import(app, window)
         assert key not in window.selected
         assert key in window.unresolved_selected
         assert window.signal_list.count() == 2

@@ -1,0 +1,21 @@
+{
+  "label": "import-regression",
+  "python": "3.12.14",
+  "platform": "Windows-11-10.0.26200-SP0",
+  "bytes": 67720688,
+  "frames": 620000,
+  "channels": 16,
+  "decoded_samples": 620000,
+  "scan_seconds": 0.5949325000110548,
+  "replay_seconds": 4.066506700008176,
+  "frames_per_second": 152465.01376691533,
+  "overview_16_seconds": 0.027924299996811897,
+  "zoom_16_seconds": 0.0015571999829262495,
+  "peak_rss_mib": 151.5625,
+  "rss_growth_mib": 107.50390625,
+  "cache_bytes": 40480768,
+  "ui_replay_seconds": 6.8156333999941126,
+  "ui_heartbeat_max_seconds": 0.2610694000031799,
+  "ui_heartbeat_p99_seconds": 0.1994123999902513,
+  "ui_visible_tracks": 16
+}

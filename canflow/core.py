@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import threading
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
@@ -39,31 +41,16 @@ def usable_frame(message: can.Message) -> bool:
     return not (message.is_error_frame or message.is_remote_frame)
 
 
-def inspect_file(path: Path, cancelled: Callable[[], bool] | None = None) -> FileInfo:
-    first = None
-    last = None
-    count = 0
-    channels: set[int] = set()
-    max_payloads: dict[tuple[int, int, bool], int] = {}
-    with can.BLFReader(path) as reader:
-        for message in reader:
-            if cancelled is not None and count % 4096 == 0 and cancelled():
-                raise InterruptedError("预检已取消")
-            if not usable_frame(message):
-                continue
-            timestamp = float(message.timestamp)
-            first = timestamp if first is None else min(first, timestamp)
-            last = timestamp if last is None else max(last, timestamp)
-            count += 1
-            if message.channel is not None:
-                channel = int(message.channel)
-                channels.add(channel)
-                frame = (channel, message.arbitration_id, message.is_extended_id)
-                max_payloads[frame] = max(max_payloads.get(frame, 0), len(message.data))
-    if first is None or last is None:
-        raise ValueError(f"{path.name}: 没有 CAN/CAN FD 数据帧")
-    payloads = tuple(sorted((*frame, length) for frame, length in max_payloads.items()))
-    return FileInfo(path, first, last, count, tuple(sorted(channels)), payloads)
+def inspect_file(path: Path, cancelled: Callable[[], bool] | None = None,
+                 progress: Callable[[int], None] | None = None) -> FileInfo:
+    from .blf_metadata import MetadataReader
+    if cancelled and cancelled():
+        raise InterruptedError("预检已取消")
+    with MetadataReader(path, cancelled, progress) as reader:
+        try:
+            return FileInfo(path, *reader.metadata())
+        except ValueError as exc:
+            raise ValueError(f"{path.name}: {exc}") from exc
 
 
 def prepare_sequence(paths: Iterable[Path]) -> list[FileInfo]:
@@ -85,14 +72,47 @@ def validate_sequence(files: Iterable[FileInfo]) -> list[FileInfo]:
     return files
 
 
+class DatabaseCache:
+    """Bounded read-only parsed DBCs shared by UI/replay; edits invalidate entries."""
+
+    def __init__(self, capacity: int = 32):
+        self.capacity = capacity
+        self.entries = OrderedDict()
+        self.lock = threading.Lock()
+
+    def load(self, path: Path):
+        path = path.resolve()
+        before = path.stat()
+        signature = (before.st_size, before.st_mtime_ns, before.st_ctime_ns, before.st_ino)
+        with self.lock:
+            entry = self.entries.get(path)
+            if entry and entry[0] == signature:
+                self.entries.move_to_end(path)
+                return entry[1]
+        # Never hold the cache lock across parsing: UI cache hits stay immediate.
+        database = cantools.database.load_file(str(path))
+        after = path.stat()
+        if signature != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
+            raise ValueError(f"{path.name}: DBC 读取期间文件发生变化，请重新导入")
+        with self.lock:
+            self.entries[path] = (signature, database)
+            self.entries.move_to_end(path)
+            while len(self.entries) > self.capacity:
+                self.entries.popitem(last=False)
+        return database
+
+
+_database_cache = DatabaseCache()
+
+
 def load_databases(mapping: dict[int, Path]) -> dict[int, cantools.database.Database]:
-    # Several channels often share one DBC. Parse/compile it once per operation.
+    # Returned databases are shared and must be treated as immutable.
     loaded = {}
     result = {}
     for channel, path in mapping.items():
         path = path.resolve()
         if path not in loaded:
-            loaded[path] = cantools.database.load_file(str(path))
+            loaded[path] = _database_cache.load(path)
         result[channel] = loaded[path]
     return result
 

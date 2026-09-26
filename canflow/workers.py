@@ -8,7 +8,9 @@ from pathlib import Path
 import can
 from PySide6 import QtCore
 
-from .core import FileInfo, SignalKey, prepare_decoders, inspect_file, load_databases, usable_frame, validate_sequence
+from .core import (FileInfo, SignalKey, available_signals, prepare_decoders, inspect_file,
+                   load_databases, signal_definition_fingerprint, usable_frame, validate_sequence)
+from .persistence import SignalReference
 from .store import configure_overview, connect, write_samples
 
 
@@ -19,7 +21,7 @@ class ScanCache:
         self.capacity = capacity
         self._entries = OrderedDict()
 
-    def inspect(self, path: Path, cancelled) -> FileInfo:
+    def inspect(self, path: Path, cancelled, progress=None) -> FileInfo:
         if cancelled():
             raise InterruptedError("预检已取消")
         path = path.resolve()
@@ -29,7 +31,7 @@ class ScanCache:
         if cached and cached[0] == signature:
             self._entries.move_to_end(path)
             return cached[1]
-        info = inspect_file(path, cancelled)
+        info = inspect_file(path, cancelled, progress) if progress else inspect_file(path, cancelled)
         after = path.stat()
         if signature != (after.st_size, after.st_mtime_ns, after.st_ctime_ns, after.st_ino):
             raise ValueError(f"{path.name}: 预检期间文件发生变化，请重新导入")
@@ -43,6 +45,7 @@ class ScanCache:
 class ScanWorker(QtCore.QThread):
     scanned = QtCore.Signal(object)
     failed = QtCore.Signal(str)
+    progress = QtCore.Signal(str, int, int, int)
 
     def __init__(self, paths: list[Path], cache: ScanCache | None = None):
         super().__init__()
@@ -55,7 +58,21 @@ class ScanWorker(QtCore.QThread):
 
     def run(self) -> None:
         try:
-            files = validate_sequence(self.cache.inspect(path, self._stop.is_set) for path in self.paths)
+            paths = list(dict.fromkeys(path.resolve() for path in self.paths))
+            files = []
+            last_emit = 0.0
+            for index, path in enumerate(paths):
+                size = path.stat().st_size
+                def report(position):
+                    nonlocal last_emit
+                    now = time.monotonic()
+                    if now - last_emit >= 0.1 or position >= size:
+                        last_emit = now
+                        self.progress.emit(path.name, index + 1, len(paths), min(100, position * 100 // max(1, size)))
+                self.progress.emit(path.name, index + 1, len(paths), 0)
+                files.append(self.cache.inspect(path, self._stop.is_set, report))
+                report(size)
+            files = validate_sequence(files)
             if self._stop.is_set():
                 return
             self.scanned.emit(files)
@@ -63,6 +80,47 @@ class ScanWorker(QtCore.QThread):
             pass
         except Exception as exc:
             self.failed.emit(str(exc))
+
+
+class DbcLoadWorker(QtCore.QThread):
+    """Prepare an atomic mapping/selection update off the GUI thread."""
+
+    def __init__(self, mapping, channel, path, selected, unresolved):
+        super().__init__()
+        self.mapping = dict(mapping)
+        self.channel = channel
+        self.path = path
+        self.selected = set(selected)
+        self.unresolved = dict(unresolved)
+        self.result = None
+        self.error = None
+
+    def run(self):
+        try:
+            try:
+                old = load_databases(self.mapping)
+            except Exception:
+                old = {}
+            references = dict(self.unresolved)
+            for key in self.selected:
+                references[key] = SignalReference(key, signal_definition_fingerprint(key, old))
+            if self.isInterruptionRequested():
+                return
+            mapping = {**self.mapping, self.channel: self.path.resolve()}
+            databases = load_databases(mapping)
+            signals = available_signals(databases)
+            available = set(signals)
+            selected, unresolved = set(), {}
+            for key, reference in references.items():
+                current = signal_definition_fingerprint(key, databases)
+                if key in available and (not reference.fingerprint or current == reference.fingerprint):
+                    selected.add(key)
+                else:
+                    unresolved[key] = reference
+            if not self.isInterruptionRequested():
+                self.result = (mapping, signals, selected, unresolved)
+        except Exception as exc:
+            self.error = str(exc)
 
 
 class ReplayWorker(QtCore.QThread):

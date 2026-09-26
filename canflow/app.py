@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sys
 import tempfile
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from .persistence import (
     load_project, make_signal_references, resolve_dbc_reference, save_project,
 )
 from .store import connect, nearest_sample, plot_points_with_samples
-from .workers import ReplayWorker, ScanCache, ScanWorker
+from .workers import DbcLoadWorker, ReplayWorker, ScanCache, ScanWorker
 
 
 def logo_pixmap(size: int) -> QtGui.QPixmap:
@@ -68,6 +69,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker: ReplayWorker | None = None
         self.scanner: ScanWorker | None = None
         self.scan_cache = ScanCache()
+        self.dbc_loader: DbcLoadWorker | None = None
+        self._dbc_generation = 0
+        self._signal_population = 0
+        self._populating_signals = False
         self.cache_dir = tempfile.TemporaryDirectory(prefix="canflow-")
         self.cache_path = Path(self.cache_dir.name) / "samples.sqlite"
         self.db = connect(self.cache_path)
@@ -184,7 +189,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.pause_button.clicked.connect(self._pause)
         toolbar.addWidget(self.pause_button)
         self.stop_button = QtWidgets.QPushButton("停止")
-        self.stop_button.clicked.connect(self._stop)
+        self.stop_button.clicked.connect(self._stop_tasks)
         toolbar.addWidget(self.stop_button)
 
         config_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
@@ -273,6 +278,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.config_signal_count.setObjectName("mutedLabel")
         signal_layout.addWidget(self.config_signal_count)
         self.signal_list = QtWidgets.QListWidget()
+        self.signal_list.setUniformItemSizes(True)
+        self.signal_list.setLayoutMode(QtWidgets.QListView.LayoutMode.Batched)
+        self.signal_list.setBatchSize(300)
         self.signal_list.itemChanged.connect(self._signal_selection_changed)
         signal_layout.addWidget(self.signal_list, 1)
         group_heading = QtWidgets.QLabel("信号组")
@@ -754,6 +762,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._populate_group_combo()
 
     def _apply_signal_group(self, append: bool) -> None:
+        if self.dbc_loader:
+            self.statusBar().showMessage("请等待 DBC 载入完成后应用信号组")
+            return
         group = self._current_group()
         if group is None:
             return
@@ -1026,10 +1037,18 @@ class MainWindow(QtWidgets.QMainWindow):
         self.scanner = ScanWorker(merged, self.scan_cache)
         self.scanner.scanned.connect(self._scan_done)
         self.scanner.failed.connect(self._scan_failed)
+        self.scanner.progress.connect(self._scan_progress)
         self.scanner.finished.connect(self._scan_finished)
         self.scanner.start()
 
+    def _scan_progress(self, name: str, index: int, total: int, percent: int) -> None:
+        if self.scanner is None or self.scanner._stop.is_set():
+            return
+        self.statusBar().showMessage(f"正在预检 {index}/{total}：{name} · {percent}%（停止按钮可取消）")
+
     def _scan_done(self, files: list[FileInfo]) -> None:
+        if self.scanner and self.scanner._stop.is_set():
+            return
         self._stop()
         self.files = files
         self.file_badge.setText(files[0].path.name if len(files) == 1 else f"{len(files)} 个 BLF 文件")
@@ -1050,10 +1069,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage(f"已导入 {len(files)} 个文件，{sum(f.frames for f in files):,} 帧")
 
     def _scan_failed(self, error: str) -> None:
+        if self.scanner and self.scanner._stop.is_set():
+            return
         self.statusBar().showMessage("预检失败")
         QtWidgets.QMessageBox.critical(self, "无法导入", error)
 
     def _scan_finished(self) -> None:
+        if self.scanner:
+            self.scanner.deleteLater()
         self.scanner = None
         self.add_files.setEnabled(True)
         self.clear_files.setEnabled(True)
@@ -1104,6 +1127,7 @@ class MainWindow(QtWidgets.QMainWindow):
         channel = self._selected_channel()
         if channel is None:
             return
+        self._cancel_dbc_import()
         self._stop()
         self.mapping.pop(channel, None)
         self.missing_mappings.pop(channel, None)
@@ -1129,43 +1153,67 @@ class MainWindow(QtWidgets.QMainWindow):
         self._assign_dbc_path(Path(path), channel)
 
     def _assign_dbc_path(self, dbc_path: Path, channel: int | None = None) -> None:
+        if self.dbc_loader is not None:
+            self.statusBar().showMessage("DBC 正在载入，请稍候…")
+            return
         if channel is None:
             channel = self._selected_channel()
         if channel is None:
             QtWidgets.QMessageBox.information(self, "选择通道", "请先选择一个通道")
             return
-        try:
-            old_databases = load_databases(self.mapping)
-        except Exception:
-            old_databases = {}
-        pending_references = dict(self.unresolved_selected)
-        for key in self.selected:
-            pending_references[key] = SignalReference(key, signal_definition_fingerprint(key, old_databases))
-        try:
-            test_mapping = {**self.mapping, channel: dbc_path.resolve()}
-            databases = load_databases(test_mapping)
-        except Exception as exc:
-            QtWidgets.QMessageBox.critical(self, "DBC 无法读取", str(exc))
+        self.signal_timer.stop()
+        if self.signal_list.count():
+            self.selected, self.unresolved_selected = self._selection_from_list()
+        self._dbc_generation += 1
+        generation = self._dbc_generation
+        loader = DbcLoadWorker(self.mapping, channel, dbc_path, self.selected, self.unresolved_selected)
+        self.dbc_loader = loader
+        self.signal_list.setEnabled(False)
+        self.signal_search.setEnabled(False)
+        self.statusBar().showMessage(f"正在载入 DBC：{dbc_path.name}…")
+        loader.finished.connect(lambda: self._dbc_loaded(loader, generation))
+        loader.start()
+
+    def _dbc_loaded(self, loader: DbcLoadWorker, generation: int) -> None:
+        loader.delivered = True
+        if generation != self._dbc_generation or loader.result is None:
+            self.dbc_loader = None
+            self.signal_list.setEnabled(True)
+            self.signal_search.setEnabled(True)
+            if generation == self._dbc_generation and loader.error:
+                self.statusBar().showMessage("DBC 载入失败，保留原映射")
+                QtWidgets.QMessageBox.critical(self, "DBC 无法读取", loader.error)
+            loader.deleteLater()
             return
         self._stop()
-        self.mapping = test_mapping
-        self.missing_mappings.pop(channel, None)
-        self.unconfigured_channels.discard(channel)
-        self._remember_recent("recent/dbcs", dbc_path)
-        self.signals = available_signals(databases)
-        available = set(self.signals)
-        self.selected.clear()
-        self.unresolved_selected.clear()
-        for key, reference in pending_references.items():
-            current = signal_definition_fingerprint(key, databases)
-            if key in available and (not reference.fingerprint or current == reference.fingerprint):
-                self.selected.add(key)
-            else:
-                self.unresolved_selected[key] = reference
+        self.mapping, self.signals, self.selected, self.unresolved_selected = loader.result
+        self.missing_mappings.pop(loader.channel, None)
+        self.unconfigured_channels.discard(loader.channel)
+        self._remember_recent("recent/dbcs", loader.path)
         self._reset_cache()
-        self._populate_signals()
         self._refresh_channel_table()
         self._mark_project_dirty()
+        self._sync_curves()
+        def ready():
+            self.dbc_loader = None
+            loader.deleteLater()
+            self.signal_list.setEnabled(True)
+            self.signal_search.setEnabled(True)
+            self.statusBar().showMessage(f"DBC 已载入，可用信号 {len(self.signals):,} 个")
+        self._populate_signals(on_finished=ready)
+
+    def _cancel_dbc_import(self) -> None:
+        self._dbc_generation += 1
+        self._signal_population += 1
+        self._populating_signals = False
+        self.signal_list.blockSignals(False)
+        self.signal_list.setEnabled(True)
+        self.signal_search.setEnabled(True)
+        if self.dbc_loader:
+            self.dbc_loader.requestInterruption()
+            if getattr(self.dbc_loader, "delivered", False):
+                self.dbc_loader.deleteLater()
+                self.dbc_loader = None
 
     def _reload_available_signals(self) -> None:
         try:
@@ -1176,25 +1224,39 @@ class MainWindow(QtWidgets.QMainWindow):
         self._populate_signals()
         self._sync_curves()
 
-    def _populate_signals(self) -> None:
+    def _populate_signals(self, on_finished=None) -> None:
+        self._signal_population += 1
+        generation = self._signal_population
+        self._populating_signals = True
         self.signal_list.blockSignals(True)
         self.signal_list.clear()
-        for key in self.signals:
-            item = QtWidgets.QListWidgetItem(key.label())
-            item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
-            item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(QtCore.Qt.CheckState.Checked if key in self.selected else QtCore.Qt.CheckState.Unchecked)
-            self.signal_list.addItem(item)
-        for key in sorted(self.unresolved_selected, key=lambda item: item.label()):
-            item = QtWidgets.QListWidgetItem(f"[未解析] {key.label()}")
-            item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
-            item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, True)
-            item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(QtCore.Qt.CheckState.Checked)
-            self.signal_list.addItem(item)
-        self.signal_list.blockSignals(False)
-        self._filter_signals(self.signal_search.text())
-        self._update_config_signal_count()
+        rows = iter([(key, False) for key in self.signals] +
+                    [(key, True) for key in sorted(self.unresolved_selected, key=lambda item: item.label())])
+        def batch():
+            if generation != self._signal_population:
+                return
+            started = time.monotonic()
+            query = self.signal_search.text().lower().strip()
+            for key, unresolved in rows:
+                label = ("[未解析] " if unresolved else "") + key.label()
+                item = QtWidgets.QListWidgetItem(label)
+                item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+                if unresolved:
+                    item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, True)
+                item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
+                item.setCheckState(QtCore.Qt.CheckState.Checked if unresolved or key in self.selected
+                                   else QtCore.Qt.CheckState.Unchecked)
+                self.signal_list.addItem(item)
+                item.setHidden(query not in label.lower())
+                if on_finished and time.monotonic() - started >= 0.008:
+                    QtCore.QTimer.singleShot(0, self, batch)
+                    return
+            self._populating_signals = False
+            self.signal_list.blockSignals(False)
+            self.config_signal_count.setText(f"可用信号 {len(self.signals)}  ·  {len(self.selected) + len(self.unresolved_selected)} 个已选")
+            if on_finished:
+                on_finished()
+        batch()
 
     def _signal_selection_changed(self, _item: QtWidgets.QListWidgetItem) -> None:
         self._update_config_signal_count()
@@ -1202,6 +1264,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.signal_timer.start()
 
     def _selection_from_list(self) -> tuple[set[SignalKey], dict[SignalKey, SignalReference]]:
+        if self._populating_signals:
+            return set(self.selected), dict(self.unresolved_selected)
         chosen: set[SignalKey] = set()
         unresolved: dict[SignalKey, SignalReference] = {}
         for row in range(self.signal_list.count()):
@@ -1445,6 +1509,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.replay_badge.setText("已暂停" if paused else "回放中")
         self.statusBar().showMessage("已暂停" if paused else "正在回放…")
 
+    def _stop_tasks(self) -> None:
+        if self.scanner:
+            self.scanner.stop()
+        if self.dbc_loader and not self._populating_signals:
+            self._cancel_dbc_import()
+        self._stop()
+        self.statusBar().showMessage("已停止")
+
     def _stop(self) -> None:
         if self.worker:
             worker = self.worker
@@ -1520,6 +1592,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.chart.layers[key].samples.setData([], [])
 
     def _clear_recordings(self) -> None:
+        if self.scanner:
+            self.scanner.stop()
         self._stop()
         self.files.clear()
         self.file_badge.setText("未导入 BLF")
@@ -1535,6 +1609,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("请选择 BLF 文件")
 
     def _clear(self) -> None:
+        self._cancel_dbc_import()
         self.signal_timer.stop()
         self._clear_recordings()
         self.mapping.clear()
@@ -1556,6 +1631,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._maybe_save_project():
             event.ignore()
             return
+        self._cancel_dbc_import()
+        if self.dbc_loader:
+            self.dbc_loader.wait()
         self._stop()
         if self.scanner:
             self.scanner.stop()
