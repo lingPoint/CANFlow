@@ -74,7 +74,7 @@ class TrackAxisPanel(QtWidgets.QWidget):
         super().__init__()
         self.chart = chart
         self.dark = True
-        self.setFixedWidth(122)
+        self.setFixedWidth(180)
 
     def set_theme(self, theme: str) -> None:
         self.dark = theme == "深色"
@@ -89,7 +89,7 @@ class TrackAxisPanel(QtWidgets.QWidget):
             return
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.TextAntialiasing)
-        background = QtGui.QColor("#111827" if self.dark else "#ffffff")
+        background = QtGui.QColor("#101e30" if self.dark else "#ffffff")
         foreground = QtGui.QColor("#d1d5db" if self.dark else "#1f2937")
         painter.fillRect(self.rect(), background)
         scene_rect = self.chart.master_view.sceneBoundingRect()
@@ -117,22 +117,31 @@ class TrackAxisPanel(QtWidgets.QWidget):
                 painter.setPen(QtGui.QPen(color, 1))
                 painter.drawLine(axis_x - 5, y, axis_x, y)
                 painter.setPen(foreground)
-                painter.drawText(QtCore.QRect(48, y - 9, axis_x - 57, 18),
+                painter.drawText(QtCore.QRect(self.width() - 62, y - 9, 48, 18),
                                  QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter,
                                  self._number(value))
             painter.save()
-            painter.translate(12, bottom - 3)
-            painter.rotate(-90)
             font = painter.font()
-            font.setBold(False)
+            font.setBold(True)
             painter.setFont(font)
             painter.setPen(color)
-            title = layer.key.name + (f" [{layer.unit}]" if layer.unit else "")
+            label_width = max(24, self.width() - 68)
             title = painter.fontMetrics().elidedText(
-                title, QtCore.Qt.TextElideMode.ElideRight, max(24, lane_height - 6)
+                layer.key.name, QtCore.Qt.TextElideMode.ElideRight, label_width
             )
-            painter.drawText(QtCore.QRect(0, -10, max(24, lane_height - 6), 20),
+            center = (top + bottom) // 2
+            painter.drawText(QtCore.QRect(8, center - 28, label_width, 22),
                              QtCore.Qt.AlignmentFlag.AlignVCenter, title)
+            font.setBold(False)
+            painter.setFont(font)
+            painter.setPen(foreground)
+            details = f"CAN {key.channel} · 0x{key.frame_id:X}"
+            painter.drawText(QtCore.QRect(8, center - 3, label_width, 20),
+                             QtCore.Qt.AlignmentFlag.AlignVCenter, details)
+            if layer.unit:
+                painter.setPen(color)
+                painter.drawText(QtCore.QRect(8, center + 20, label_width, 20),
+                                 QtCore.Qt.AlignmentFlag.AlignVCenter, f"[{layer.unit}]")
             painter.restore()
 
 
@@ -167,7 +176,7 @@ class MultiSignalChart(QtWidgets.QWidget):
         self.master_view = TimelineViewBox(self.scale_visible_y)
         self.time_axis = CaptureTimeAxis()
         self.widget = pg.PlotWidget(viewBox=self.master_view, axisItems={"bottom": self.time_axis},
-                                    background="#111827")
+                                    background="#101e30")
         self.widget.showGrid(x=True, y=True, alpha=0.2)
         self.time_axis.refresh_label()
         self.widget.getPlotItem().hideAxis("left")
@@ -337,7 +346,7 @@ class MultiSignalChart(QtWidgets.QWidget):
 
     def set_theme(self, theme: str) -> None:
         self.theme = theme
-        background = "#111827" if theme == "深色" else "#ffffff"
+        background = "#101e30" if theme == "深色" else "#ffffff"
         foreground = "#d1d5db" if theme == "深色" else "#1f2937"
         self.widget.setBackground(background)
         for axis_name in ("left", "bottom"):

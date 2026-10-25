@@ -47,12 +47,61 @@ def sample_clock_text(timestamp: float) -> str:
     return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
+class SignalRowDelegate(QtWidgets.QStyledItemDelegate):
+    """Keep the native checkbox/keyboard behavior with aligned signal metadata."""
+
+    def sizeHint(self, option, index):
+        return QtCore.QSize(320, 80 if index.data(QtCore.Qt.ItemDataRole.UserRole + 2) else 48)
+
+    def editorEvent(self, event, model, option, index):
+        styled = QtWidgets.QStyleOptionViewItem(option)
+        if index.data(QtCore.Qt.ItemDataRole.UserRole + 2):
+            if isinstance(event, QtGui.QMouseEvent) and event.position().y() < option.rect.top() + 32:
+                return False
+            styled.rect.adjust(0, 32, 0, 0)
+        return super().editorEvent(event, model, styled, index)
+
+    def paint(self, painter, option, index):
+        key = index.data(QtCore.Qt.ItemDataRole.UserRole)
+        if not isinstance(key, SignalKey):
+            return super().paint(painter, option, index)
+        styled = QtWidgets.QStyleOptionViewItem(option)
+        self.initStyleOption(styled, index)
+        group = index.data(QtCore.Qt.ItemDataRole.UserRole + 2)
+        if group:
+            painter.save()
+            painter.fillRect(option.rect.adjusted(0, 0, 0, -(option.rect.height() - 30)),
+                             QtGui.QColor("#1b3048"))
+            painter.setPen(QtGui.QColor("#93a4bd"))
+            painter.drawText(option.rect.adjusted(12, 0, -12, -(option.rect.height() - 30)),
+                             QtCore.Qt.AlignmentFlag.AlignVCenter, group)
+            painter.restore()
+            styled.rect.adjust(0, 32, 0, 0)
+        styled.text = ""
+        style = styled.widget.style() if styled.widget else QtWidgets.QApplication.style()
+        style.drawControl(QtWidgets.QStyle.ControlElement.CE_ItemViewItem, styled, painter, styled.widget)
+        painter.save()
+        rect = styled.rect.adjusted(40, 4, -12, -4)
+        unresolved = index.data(QtCore.Qt.ItemDataRole.UserRole + 1)
+        checked = index.data(QtCore.Qt.ItemDataRole.CheckStateRole) == QtCore.Qt.CheckState.Checked.value
+        painter.setPen(QtGui.QColor("#f4bd70" if unresolved else signal_color(key) if checked else "#e8effa"))
+        name = ("[未解析] " if unresolved else "") + key.name
+        name = painter.fontMetrics().elidedText(name, QtCore.Qt.TextElideMode.ElideRight, rect.width())
+        painter.drawText(rect.adjusted(0, 0, 0, -22), QtCore.Qt.AlignmentFlag.AlignVCenter, name)
+        painter.setPen(QtGui.QColor("#93a4bd"))
+        unit = index.data(QtCore.Qt.ItemDataRole.UserRole + 3) or ""
+        painter.drawText(rect.adjusted(0, 22, 0, 0), QtCore.Qt.AlignmentFlag.AlignVCenter,
+                         f"CAN {key.channel}  ·  {'EXT' if key.extended else 'STD'} 0x{key.frame_id:X}"
+                         + (f"    ·    {unit}" if unit else ""))
+        painter.restore()
+
+
 class MainWindow(QtWidgets.QMainWindow):
     def __init__(self) -> None:
         super().__init__()
         self.setWindowTitle("CANFlow · BLF 波形回放")
         self.setWindowIcon(QtGui.QIcon(logo_pixmap(256)))
-        self.resize(1450, 900)
+        self.resize(1600, 1024)
         self.files: list[FileInfo] = []
         self.mapping: dict[int, Path] = {}
         self.missing_mappings: dict[int, DbcReference] = {}
@@ -108,7 +157,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_timer.start()
 
     def _build_ui(self) -> None:
-        file_menu = self.menuBar().addMenu("项目")
+        file_menu = QtWidgets.QMenu("项目", self)
         for text, shortcut, callback in (
             ("新建", "Ctrl+N", self._new_project),
             ("打开…", "Ctrl+O", self._open_project),
@@ -118,6 +167,7 @@ class MainWindow(QtWidgets.QMainWindow):
             action = file_menu.addAction(text)
             action.setShortcut(shortcut)
             action.triggered.connect(callback)
+            self.addAction(action)
         self.recent_project_menu = file_menu.addMenu("最近项目")
         file_menu.aboutToShow.connect(self._populate_recent_projects)
 
@@ -134,9 +184,19 @@ class MainWindow(QtWidgets.QMainWindow):
         brand = QtWidgets.QLabel(f"CANFlow v{__version__}")
         brand.setObjectName("brand")
         header.addWidget(brand)
-        subtitle = QtWidgets.QLabel("BLF 波形回放")
-        subtitle.setObjectName("mutedLabel")
-        header.addWidget(subtitle)
+        self.project_button = QtWidgets.QToolButton()
+        self.project_button.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.project_button.setMenu(file_menu)
+        self.project_button.setMinimumWidth(210)
+        self.project_button.setMaximumWidth(270)
+        self.project_button.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred,
+                                          QtWidgets.QSizePolicy.Policy.Fixed)
+        header.addWidget(self.project_button)
+        save_button = QtWidgets.QToolButton()
+        save_button.setIcon(self.style().standardIcon(QtWidgets.QStyle.StandardPixmap.SP_DialogSaveButton))
+        save_button.setToolTip("保存项目 (Ctrl+S)")
+        save_button.clicked.connect(self._save_project)
+        header.addWidget(save_button)
         header.addStretch()
         self.file_badge = QtWidgets.QLabel("未导入 BLF")
         self.file_badge.setObjectName("fileBadge")
@@ -152,8 +212,25 @@ class MainWindow(QtWidgets.QMainWindow):
         config_page = QtWidgets.QWidget()
         config_layout = QtWidgets.QVBoxLayout(config_page)
         config_layout.setContentsMargins(0, 8, 0, 0)
-        self.pages.addTab(wave_page, "波形")
+        self.pages.addTab(wave_page, "波形分析")
         self.pages.addTab(config_page, "文件与信号配置")
+        self.workflow_panel = QtWidgets.QWidget()
+        self.workflow_panel.setObjectName("workflowPanel")
+        workflow_layout = QtWidgets.QHBoxLayout(self.workflow_panel)
+        workflow_layout.setContentsMargins(14, 9, 14, 9)
+        self.workflow_hint = QtWidgets.QLabel()
+        self.workflow_hint.setWordWrap(True)
+        workflow_layout.addWidget(self.workflow_hint, 1)
+        self.workflow_action = QtWidgets.QPushButton("导入 BLF")
+        self.workflow_action.setObjectName("primaryButton")
+        self.workflow_action.clicked.connect(self._workflow_next)
+        workflow_layout.addWidget(self.workflow_action)
+        header.addWidget(self.workflow_action)
+        root.addWidget(self.workflow_panel)
+        transport = QtWidgets.QHBoxLayout()
+        transport.setContentsMargins(12, 0, 0, 0)
+        header.addLayout(transport)
+        self.pages.currentChanged.connect(lambda _index: self._update_workflow())
         config_toolbar = QtWidgets.QHBoxLayout()
         config_layout.addLayout(config_toolbar)
         config_title = QtWidgets.QLabel("文件与信号配置")
@@ -176,59 +253,87 @@ class MainWindow(QtWidgets.QMainWindow):
         self.add_files = QtWidgets.QPushButton("添加 BLF 文件")
         self.add_files.clicked.connect(self._add_files)
         self.add_files.setText("+ 添加 BLF 文件")
-        self.add_files.setObjectName("primaryButton")
+        self.add_files.setObjectName("secondaryButton")
         config_toolbar.addWidget(self.add_files)
         self.clear_files = QtWidgets.QPushButton("清空")
         self.clear_files.clicked.connect(self._clear_recordings)
         config_toolbar.addWidget(self.clear_files)
         toolbar.addStretch()
-        self.start_button = QtWidgets.QPushButton("开始 / 继续")
+        self.start_button = QtWidgets.QPushButton("开始回放")
+        self.start_button.setObjectName("primaryButton")
         self.start_button.clicked.connect(self._start)
-        toolbar.addWidget(self.start_button)
+        transport.addWidget(self.start_button)
         self.pause_button = QtWidgets.QPushButton("暂停")
         self.pause_button.clicked.connect(self._pause)
-        toolbar.addWidget(self.pause_button)
+        transport.addWidget(self.pause_button)
         self.stop_button = QtWidgets.QPushButton("停止")
         self.stop_button.clicked.connect(self._stop_tasks)
-        toolbar.addWidget(self.stop_button)
+        transport.addWidget(self.stop_button)
+        self.stop_button.setToolTip("停止当前预检、DBC 导入或回放任务，保留已导入的数据")
 
         config_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
         self.config_splitter = config_splitter
+        config_splitter.setChildrenCollapsible(False)
         config_layout.addWidget(config_splitter, 1)
         recording_panel = QtWidgets.QWidget()
         recording_panel.setObjectName("recordingPanel")
         side_layout = QtWidgets.QVBoxLayout(recording_panel)
+        side_layout.setContentsMargins(0, 0, 0, 0)
+        side_layout.setSpacing(16)
         config_splitter.addWidget(recording_panel)
         signal_panel = QtWidgets.QWidget()
         signal_panel.setObjectName("signalPanel")
         signal_layout = QtWidgets.QVBoxLayout(signal_panel)
         config_splitter.addWidget(signal_panel)
-        config_splitter.setSizes([650, 750])
+        config_splitter.setSizes([650, 850])
         config_splitter.setStretchFactor(0, 1)
         config_splitter.setStretchFactor(1, 1)
         file_heading = QtWidgets.QLabel("01  记录文件")
         file_heading.setObjectName("sectionHeading")
-        side_layout.addWidget(file_heading)
+        files_section = QtWidgets.QWidget()
+        files_section.setObjectName("filesSection")
+        files_layout = QtWidgets.QVBoxLayout(files_section)
+        files_layout.setContentsMargins(18, 16, 18, 16)
+        files_layout.setSpacing(12)
+        file_heading_row = QtWidgets.QHBoxLayout()
+        file_heading_row.addWidget(file_heading)
+        file_heading_row.addStretch()
+        file_heading_row.addWidget(self.add_files)
+        file_heading_row.addWidget(self.clear_files)
+        files_layout.addLayout(file_heading_row)
         file_hint = QtWidgets.QLabel("按首帧时间排序，逐个文件连续回放")
         file_hint.setObjectName("mutedLabel")
-        side_layout.addWidget(file_hint)
+        files_layout.addWidget(file_hint)
         self.file_table = QtWidgets.QTableWidget(0, 3)
         self.file_table.setHorizontalHeaderLabels(["文件", "首帧时间", "帧数"])
         self.file_table.horizontalHeader().setStretchLastSection(True)
+        self.file_table.horizontalHeader().setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.file_table.setColumnWidth(1, 185)
+        self.file_table.setColumnWidth(2, 90)
         self.file_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        side_layout.addWidget(self.file_table, 2)
+        files_layout.addWidget(self.file_table, 1)
+        self.file_summary = QtWidgets.QLabel("尚未导入记录文件")
+        self.file_summary.setObjectName("mutedLabel")
+        files_layout.addWidget(self.file_summary)
+        side_layout.addWidget(files_section, 1)
+        mapping_section = QtWidgets.QWidget()
+        mapping_section.setObjectName("mappingSection")
+        mapping_layout = QtWidgets.QVBoxLayout(mapping_section)
+        mapping_layout.setContentsMargins(18, 16, 18, 16)
+        mapping_layout.setSpacing(12)
+        side_layout.addWidget(mapping_section, 1)
         map_heading = QtWidgets.QLabel("02  DBC 通道映射")
         map_heading.setObjectName("sectionHeading")
-        side_layout.addWidget(map_heading)
-        map_hint = QtWidgets.QLabel("DBC 独立于 BLF，仅用于解码信号")
+        mapping_layout.addWidget(map_heading)
+        map_hint = QtWidgets.QLabel("映射保存在项目中，与 BLF 文件独立")
         map_hint.setObjectName("mutedLabel")
-        side_layout.addWidget(map_hint)
+        mapping_layout.addWidget(map_hint)
         self.channel_table = QtWidgets.QTableWidget(0, 2)
         self.channel_table.setHorizontalHeaderLabels(["通道", "DBC"])
         self.channel_table.horizontalHeader().setStretchLastSection(True)
         self.channel_table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.channel_table.setEditTriggers(QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
-        side_layout.addWidget(self.channel_table, 1)
+        mapping_layout.addWidget(self.channel_table, 1)
         channel_buttons = QtWidgets.QHBoxLayout()
         add_channel = QtWidgets.QPushButton("新增通道")
         add_channel.clicked.connect(self._add_channel_mapping)
@@ -246,7 +351,10 @@ class MainWindow(QtWidgets.QMainWindow):
         remove_channel = QtWidgets.QPushButton("删除映射")
         remove_channel.clicked.connect(self._remove_channel_mapping)
         channel_buttons.addWidget(remove_channel)
-        side_layout.addLayout(channel_buttons)
+        mapping_layout.addLayout(channel_buttons)
+        mapping_note = QtWidgets.QLabel("未映射 DBC 的通道仍可查看原始报文")
+        mapping_note.setObjectName("mutedLabel")
+        mapping_layout.addWidget(mapping_note)
 
         group_row = QtWidgets.QHBoxLayout()
         self.group_combo = QtWidgets.QComboBox()
@@ -259,12 +367,18 @@ class MainWindow(QtWidgets.QMainWindow):
         group_row.addWidget(append_group)
         signals_heading = QtWidgets.QLabel("03  信号与信号组")
         signals_heading.setObjectName("sectionHeading")
-        signal_layout.addWidget(signals_heading)
-        signals_hint = QtWidgets.QLabel("勾选信号后应用，即可在波形页查看游标值")
+        signal_layout.setContentsMargins(18, 16, 18, 16)
+        signal_layout.setSpacing(12)
+        signals_heading_row = QtWidgets.QHBoxLayout()
+        signals_heading_row.addWidget(signals_heading)
+        signals_heading_row.addStretch()
+        signal_layout.addLayout(signals_heading_row)
+        signals_hint = QtWidgets.QLabel("勾选自动生效；已回放的数据会自动补画，回放中新增信号将在结束后补画")
+        signals_hint.setWordWrap(True)
         signals_hint.setObjectName("mutedLabel")
         signal_layout.addWidget(signals_hint)
         group_manage = QtWidgets.QHBoxLayout()
-        for text, callback in (("保存组", self._save_signal_group), ("删除组", self._delete_signal_group),
+        for text, callback in (("保存为信号组", self._save_signal_group), ("删除组", self._delete_signal_group),
                                ("导入", self._import_signal_group), ("导出", self._export_signal_group)):
             button = QtWidgets.QPushButton(text)
             button.clicked.connect(callback)
@@ -272,26 +386,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self._populate_group_combo()
         self.signal_search = QtWidgets.QLineEdit()
         self.signal_search.setPlaceholderText("搜索信号 / 报文 ID")
+        self.signal_search.setClearButtonEnabled(True)
         self.signal_search.textChanged.connect(self._filter_signals)
         signal_layout.addWidget(self.signal_search)
         self.config_signal_count = QtWidgets.QLabel("0 个已选")
         self.config_signal_count.setObjectName("mutedLabel")
-        signal_layout.addWidget(self.config_signal_count)
+        signals_heading_row.addWidget(self.config_signal_count)
         self.signal_list = QtWidgets.QListWidget()
-        self.signal_list.setUniformItemSizes(True)
+        self.signal_list.setItemDelegate(SignalRowDelegate(self.signal_list))
+        self.signal_list.setUniformItemSizes(False)
         self.signal_list.setLayoutMode(QtWidgets.QListView.LayoutMode.Batched)
         self.signal_list.setBatchSize(300)
         self.signal_list.itemChanged.connect(self._signal_selection_changed)
         signal_layout.addWidget(self.signal_list, 1)
-        group_heading = QtWidgets.QLabel("信号组")
+        group_heading = QtWidgets.QLabel("信号组    跨项目复用信号选择")
         group_heading.setObjectName("mutedLabel")
         signal_layout.addWidget(group_heading)
         signal_layout.addLayout(group_row)
         signal_layout.addLayout(group_manage)
-        apply_signals = QtWidgets.QPushButton("应用所选信号 / 补画历史")
-        apply_signals.setObjectName("primaryButton")
-        apply_signals.clicked.connect(self._apply_signals)
-        signal_layout.addWidget(apply_signals)
+        self.selection_summary = QtWidgets.QLabel("当前未选择信号")
+        self.selection_summary.setObjectName("mutedLabel")
+        self.selection_summary.setWordWrap(True)
+        signal_layout.addWidget(self.selection_summary)
+        view_waveform = QtWidgets.QPushButton("查看波形 →")
+        view_waveform.setObjectName("primaryButton")
+        view_waveform.clicked.connect(lambda: self.pages.setCurrentIndex(0))
+        view_waveform.hide()
         self.notice_toggle = QtWidgets.QToolButton()
         self.notice_toggle.setText("提示详情")
         self.notice_toggle.setCheckable(True)
@@ -303,7 +423,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.signal_notice.setWordWrap(True)
         self.signal_notice.setTextFormat(QtCore.Qt.TextFormat.PlainText)
         self.signal_notice.setTextInteractionFlags(QtCore.Qt.TextInteractionFlag.TextSelectableByMouse)
-        self.signal_notice.setStyleSheet("color: #a35400;")
+        self.signal_notice.setStyleSheet("color: #f4bd70;")
         self.notice_scroll = QtWidgets.QScrollArea()
         self.notice_scroll.setWidgetResizable(True)
         self.notice_scroll.setFixedHeight(120)
@@ -318,7 +438,7 @@ class MainWindow(QtWidgets.QMainWindow):
         inspector = QtWidgets.QWidget()
         self.sidebar = inspector
         inspector.setObjectName("inspectorPanel")
-        inspector.setMinimumWidth(350)
+        inspector.setMinimumWidth(300)
         inspector.setMaximumWidth(480)
         inspector_layout = QtWidgets.QVBoxLayout(inspector)
         inspector_layout.setContentsMargins(16, 14, 16, 12)
@@ -346,7 +466,7 @@ class MainWindow(QtWidgets.QMainWindow):
         right_layout.setSpacing(7)
         splitter.addWidget(right)
         splitter.setChildrenCollapsible(False)
-        splitter.setSizes([390, 1150])
+        splitter.setSizes([320, 1240])
         splitter.setStretchFactor(1, 4)
         cursor_header = QtWidgets.QHBoxLayout()
         right_layout.addLayout(cursor_header)
@@ -399,19 +519,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.measure_label = QtWidgets.QLabel("选择信号，开启测量后在波形上点击两次")
         self.measure_label.setObjectName("mutedLabel")
         measure_bar.addWidget(self.measure_label, 1)
-        measure_bar.addWidget(QtWidgets.QLabel("采样点粗细"))
+        sample_label = QtWidgets.QLabel("采样点粗细")
         self.sample_emphasis = QtWidgets.QDoubleSpinBox()
         self.sample_emphasis.setRange(0.5, 8.0)
         self.sample_emphasis.setSingleStep(0.5)
         self.sample_emphasis.setValue(saved_sample_emphasis)
         self.sample_emphasis.setToolTip("只加粗有数据帧的采样点；连接线保持细线")
         self.sample_emphasis.valueChanged.connect(self._set_sample_emphasis)
-        measure_bar.addWidget(self.sample_emphasis)
         self.display_panel = QtWidgets.QWidget()
         chart_controls = QtWidgets.QGridLayout(self.display_panel)
         chart_controls.setContentsMargins(0, 6, 0, 6)
         chart_controls.setHorizontalSpacing(10)
         chart_controls.setVerticalSpacing(8)
+        chart_controls.addWidget(sample_label, 4, 0)
+        chart_controls.addWidget(self.sample_emphasis, 4, 1)
         hint = QtWidgets.QLabel("Ctrl + 滚轮：同步缩放纵轴")
         hint.setStyleSheet("color: #52647b;")
         chart_controls.addWidget(hint, 0, 0, 1, 3)
@@ -454,7 +575,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.curve_footer.setObjectName("mutedLabel")
         inspector_layout.addWidget(self.curve_footer)
         self.display_toggle = QtWidgets.QToolButton()
-        self.display_toggle.setText("显示与回放  ▸")
+        self.display_toggle.setText("显示设置  ▸")
         self.display_toggle.setCheckable(True)
         self.display_toggle.toggled.connect(self._set_display_settings_visible)
         inspector_layout.addWidget(self.display_toggle)
@@ -465,13 +586,13 @@ class MainWindow(QtWidgets.QMainWindow):
         details_visible = self.settings.value("layout/playback_details_visible", False, type=bool)
         self.details_toggle.setChecked(details_visible)
         self.details_toggle.toggled.connect(self._set_playback_details_visible)
-        self.display_panel.layout().addWidget(self.details_toggle, 3, 0, 1, 3)
+        workflow_layout.addWidget(self.details_toggle)
 
         self.playback_details = QtWidgets.QWidget()
         details_layout = QtWidgets.QVBoxLayout(self.playback_details)
         details_layout.setContentsMargins(0, 0, 0, 0)
         row = QtWidgets.QHBoxLayout()
-        details_layout.addLayout(row)
+        right_layout.addLayout(row)
         self.follow = QtWidgets.QCheckBox("跟随播放")
         self.follow.setChecked(self.settings.value("chart/follow", True, type=bool))
         self.follow.toggled.connect(lambda value: self.settings.setValue("chart/follow", value))
@@ -491,7 +612,9 @@ class MainWindow(QtWidgets.QMainWindow):
         row.addWidget(self.time_label)
         self.progress = QtWidgets.QProgressBar()
         self.progress.setRange(0, 1000)
-        details_layout.addWidget(self.progress)
+        self.progress.setFixedHeight(6)
+        self.progress.setTextVisible(False)
+        right_layout.addWidget(self.progress)
         details_layout.addWidget(QtWidgets.QLabel("原始 CAN / CAN FD 报文（最近 1000 条）"))
         self.raw_table = QtWidgets.QTableWidget(0, 5)
         self.raw_table.setHorizontalHeaderLabels(["时间", "通道", "ID", "类型", "数据"])
@@ -518,6 +641,14 @@ class MainWindow(QtWidgets.QMainWindow):
                 border-radius: 7px; padding: 5px 9px; min-height: 22px;
             }
             QPushButton:hover, QToolButton:hover { border-color: #49c7f5; }
+            QPushButton:disabled, QToolButton:disabled { color: #71829b;
+                background: #162235; border-color: #26354a; }
+            QPushButton:focus, QToolButton:focus, QLineEdit:focus, QComboBox:focus {
+                border: 1px solid #49c7f5; }
+            QWidget#workflowPanel { background: #192c43; border: 1px solid #304e6b;
+                border-radius: 8px; }
+            QProgressBar { background: #22344d; border: 0; border-radius: 3px; }
+            QProgressBar::chunk { background: #49c7f5; border-radius: 3px; }
             QPushButton:pressed, QToolButton:checked { background: #244b69; }
             QPushButton#primaryButton { background: #235273; border-color: #367fa8; }
             QPushButton#primaryButton:hover { background: #28658d; }
@@ -542,12 +673,95 @@ class MainWindow(QtWidgets.QMainWindow):
                 padding: 7px 12px; border-radius: 7px; }
             QLabel#replayBadge { background: #153c36; color: #66e1a7; }
         """)
+        for table in (self.file_table, self.channel_table, self.curve_table):
+            table.verticalHeader().hide()
+            table.verticalHeader().setDefaultSectionSize(48)
+            table.setShowGrid(False)
+            table.setAlternatingRowColors(True)
+            table.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
+        self.signal_list.setSpacing(2)
+        self.signal_list.setMinimumWidth(320)
+        self.wave_splitter.setStretchFactor(0, 0)
+        self.setStyleSheet(self.styleSheet() + """
+            QWidget { font-size: 13px; }
+            QWidget#recordingPanel { background: transparent; border: 0; }
+            QWidget#filesSection, QWidget#mappingSection { background: #142236;
+                border: 1px solid #29425b; border-radius: 10px; }
+            QWidget#inspectorPanel, QWidget#chartPanel, QWidget#signalPanel {
+                background: #122135; border-color: #29425b; border-radius: 10px; }
+            QWidget#workflowPanel { background: #122135; border-color: #29425b; }
+            QPushButton, QToolButton, QComboBox { min-height: 26px; padding: 5px 12px; }
+            QPushButton#primaryButton { background: #32b9ec; color: #071c2b;
+                border-color: #49c7f5; font-weight: 600; }
+            QPushButton#primaryButton:hover { background: #66d5ff; }
+            QPushButton#primaryButton:disabled { background: #19374b; color: #71829b;
+                border-color: #26354a; }
+            QLineEdit { min-height: 24px; background: #0f1e30; }
+            QTableWidget, QListWidget { background: #102033; border: 0;
+                alternate-background-color: #14263b; }
+            QHeaderView::section { background: #1b3048; padding: 10px 8px; }
+            QTableWidget::item { padding: 6px; border-bottom: 1px solid #20364d; }
+            QListWidget::item { padding: 12px 8px; border-bottom: 1px solid #20364d; }
+            QListWidget::item:checked { color: #49c7f5; }
+            QTabBar::tab { padding: 14px 22px; background: transparent; font-size: 14px; }
+            QLabel#brand { font-size: 24px; }
+            QLabel#sectionHeading { font-size: 19px; }
+        """)
         self.statusBar().showMessage("请选择 BLF 文件")
+        self._update_workflow()
+
+    def _workflow_next(self) -> None:
+        if not self.files:
+            self._add_files()
+        elif not self.mapping or not self.selected:
+            self.pages.setCurrentIndex(1)
+            self.signal_search.setFocus()
+        else:
+            self.pages.setCurrentIndex(1 if self.pages.currentIndex() == 0 else 0)
+
+    def _update_workflow(self) -> None:
+        """Keep both pages actionable without changing decoding or selection rules."""
+        busy = self.worker is not None or self.scanner is not None or self.dbc_loader is not None
+        self.start_button.setEnabled(bool(self.files) and not busy)
+        self.pause_button.setEnabled(self.worker is not None and not self.worker.backfill)
+        self.stop_button.setEnabled(busy)
+        self.add_files.setEnabled(not busy)
+        self.clear_files.setEnabled(bool(self.files) and not busy)
+        self.timeline.setEnabled(bool(self.files) and not (self.scanner or self.dbc_loader)
+                                 and not (self.worker and self.worker.backfill))
+        self.start_button.setText("重新回放" if self.files and self.playhead >= self.files[-1].last
+                                  else "开始回放")
+        if not self.files:
+            hint, action = "01  导入 BLF  →  02  配置 DBC 与信号  →  03  回放与测量", "导入 BLF"
+        elif not self.mapping:
+            hint, action = "02  文件已就绪。配置通道 DBC 可解码信号，也可直接回放原始报文。", "配置 DBC"
+        elif not self.selected:
+            hint, action = "02  选择要查看的信号，勾选自动生效；也可直接回放原始报文。", "选择信号"
+        else:
+            hint = f"03  已选 {len(self.selected)} 个信号 · 移动查看游标值，选择信号后开启采样间隔测量"
+            action = "调整信号" if self.pages.currentIndex() == 0 else "查看波形"
+        self.workflow_hint.setText(hint)
+        self.file_summary.setText(f"已载入 {len(self.files)} 个文件 · 按采集时间排序"
+                                  if self.files else "尚未导入记录文件")
+        if self.pages.currentIndex() == 1 and self.files:
+            self.workflow_hint.setText(
+                f"{len(self.files)} 个 BLF 文件 · {len(self.mapping)} 个 DBC 映射 · "
+                f"{len(self.selected)} 个已选信号   |   勾选自动生效")
+        self.workflow_action.setText(action)
+        self.workflow_action.setEnabled(not (self.scanner or self.dbc_loader))
+        self.pause_button.setVisible(self.worker is not None and not self.worker.backfill)
+        self.stop_button.setVisible(busy)
+        self.start_button.setVisible(self.pages.currentIndex() == 0)
+        self.workflow_action.setObjectName("primaryButton" if self.pages.currentIndex() == 1 else "")
+        self.workflow_action.style().unpolish(self.workflow_action)
+        self.workflow_action.style().polish(self.workflow_action)
 
     def _update_window_title(self) -> None:
         name = self.project_path.name if self.project_path else "未命名项目"
         marker = " *" if self.project_dirty else ""
         self.setWindowTitle(f"CANFlow v{__version__} · {name}{marker}")
+        self.project_button.setText(f"项目：{name.removesuffix('.canflow.json')}{marker}")
+        self.project_button.setToolTip(str(self.project_path) if self.project_path else name)
 
     def _mark_project_dirty(self) -> None:
         if not self.project_active:
@@ -895,8 +1109,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_playback_details_visible(self, visible: bool, persist: bool = True) -> None:
         self.playback_details.setVisible(visible)
-        self.details_toggle.setText("隐藏回放详情" if visible else "显示回放详情")
-        self.details_toggle.setToolTip("隐藏时间轴、进度和原始报文" if visible else "显示时间轴、进度和原始报文")
+        self.details_toggle.setText("隐藏原始报文" if visible else "查看原始报文")
+        self.details_toggle.setToolTip("展开或收起最近 1000 条原始 CAN / CAN FD 报文")
         if self.details_toggle.isChecked() != visible:
             self.details_toggle.blockSignals(True)
             self.details_toggle.setChecked(visible)
@@ -906,7 +1120,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_display_settings_visible(self, visible: bool) -> None:
         self.display_panel.setVisible(visible)
-        self.display_toggle.setText("显示与回放  -" if visible else "显示与回放  +")
+        self.display_toggle.setText("显示设置  -" if visible else "显示设置  +")
 
     def _filter_curve_rows(self, query: str) -> None:
         needle = query.strip().casefold()
@@ -981,9 +1195,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.measure_label.setText("请先在左侧选择并显示一个信号")
             return
         origin = self.files[0].first
-        sample = nearest_sample(self.db, key.storage_key(), origin + x_value)
         low, high = self.plot.viewRange()[0]
-        if sample is None or not origin + low <= sample[0] <= origin + high:
+        sample = nearest_sample(
+            self.db, key.storage_key(), origin + x_value,
+            start=origin + low, end=origin + high,
+        )
+        if sample is None:
             self.measure_label.setText(f"{key.name} 当前视野内暂无采样点")
             return
         if self.measure_a is None or self.measure_b is not None or self.measure_key != key:
@@ -1040,6 +1257,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.scanner.progress.connect(self._scan_progress)
         self.scanner.finished.connect(self._scan_finished)
         self.scanner.start()
+        self._update_workflow()
 
     def _scan_progress(self, name: str, index: int, total: int, percent: int) -> None:
         if self.scanner is None or self.scanner._stop.is_set():
@@ -1080,6 +1298,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.scanner = None
         self.add_files.setEnabled(True)
         self.clear_files.setEnabled(True)
+        self._update_workflow()
 
     def _refresh_channel_table(self) -> None:
         recorded = {channel for item in self.files for channel in item.channels}
@@ -1099,7 +1318,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 value = f"缺失：{self.missing_mappings[channel].absolute_path}"
             else:
                 value = "未指定"
-            self.channel_table.setItem(row, 1, QtWidgets.QTableWidgetItem(value))
+            cell = QtWidgets.QTableWidgetItem(self.mapping[channel].name if channel in self.mapping else value)
+            cell.setToolTip(value)
+            self.channel_table.setItem(row, 1, cell)
             if channel == current:
                 self.channel_table.selectRow(row)
 
@@ -1230,6 +1451,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._populating_signals = True
         self.signal_list.blockSignals(True)
         self.signal_list.clear()
+        try:
+            databases = load_databases(self.mapping)
+        except Exception:
+            databases = {}
+        seen_messages = set()
         rows = iter([(key, False) for key in self.signals] +
                     [(key, True) for key in sorted(self.unresolved_selected, key=lambda item: item.label())])
         def batch():
@@ -1241,6 +1467,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 label = ("[未解析] " if unresolved else "") + key.label()
                 item = QtWidgets.QListWidgetItem(label)
                 item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+                message_id = (key.channel, key.frame_id, key.extended)
+                if message_id not in seen_messages:
+                    seen_messages.add(message_id)
+                    message_name = ""
+                    if key.channel in databases:
+                        try:
+                            message_name = databases[key.channel].get_message_by_frame_id(key.frame_id).name
+                        except KeyError:
+                            pass
+                    item.setData(QtCore.Qt.ItemDataRole.UserRole + 2,
+                                 f"CAN {key.channel}  ·  0x{key.frame_id:X}"
+                                 + (f"  ·  {message_name}" if message_name else ""))
+                item.setData(QtCore.Qt.ItemDataRole.UserRole + 3, signal_unit(key, databases))
                 if unresolved:
                     item.setData(QtCore.Qt.ItemDataRole.UserRole + 1, True)
                 item.setFlags(item.flags() | QtCore.Qt.ItemFlag.ItemIsUserCheckable)
@@ -1254,6 +1493,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._populating_signals = False
             self.signal_list.blockSignals(False)
             self.config_signal_count.setText(f"可用信号 {len(self.signals)}  ·  {len(self.selected) + len(self.unresolved_selected)} 个已选")
+            self._update_config_signal_count()
             if on_finished:
                 on_finished()
         batch()
@@ -1286,6 +1526,14 @@ class MainWindow(QtWidgets.QMainWindow):
         chosen = sum(self.signal_list.item(row).checkState() == QtCore.Qt.CheckState.Checked
                      for row in range(self.signal_list.count()))
         self.config_signal_count.setText(f"可用信号 {len(self.signals)}  ·  {chosen} 个已选")
+        names = [self.signal_list.item(row).data(QtCore.Qt.ItemDataRole.UserRole).name
+                 for row in range(self.signal_list.count())
+                 if self.signal_list.item(row).checkState() == QtCore.Qt.CheckState.Checked]
+        preview = " · ".join(names[:3])
+        if len(names) > 3:
+            preview += f"  等 {len(names)} 个信号"
+        self.selection_summary.setText(f"当前已选  {preview}" if names else "当前未选择信号")
+        self.selection_summary.setToolTip("\n".join(names))
 
     def _filter_signals(self, query: str) -> None:
         query = query.lower().strip()
@@ -1360,6 +1608,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._update_cursor_values(self.cursor_x)
 
     def _start(self) -> None:
+        if self.scanner or self.dbc_loader:
+            self.statusBar().showMessage("正在准备数据，请等待完成后开始回放")
+            return
         if not self.files:
             QtWidgets.QMessageBox.information(self, "缺少文件", "请先导入 BLF 文件")
             return
@@ -1392,12 +1643,14 @@ class MainWindow(QtWidgets.QMainWindow):
         worker.start()
         self.replay_badge.setText("补画中" if backfill else "回放中")
         self.statusBar().showMessage("正在补画信号…" if backfill else "正在回放…")
+        self._update_workflow()
 
     def _poll_replay(self) -> None:
         if self.worker:
             data = self.worker.take_update()
             if data is not None:
                 self._advanced(self.worker, data)
+        self._update_workflow()
 
     def _advanced(self, worker: ReplayWorker, data: tuple) -> None:
         if worker is not self.worker:
@@ -1463,6 +1716,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if worker.succeeded and missing and self.files and self.played_until > self.files[0].first:
                 self._set_signal_notice(f"正在补画 {len(missing)} 个新信号…")
                 self._launch(missing, backfill=True)
+            self._update_workflow()
 
     def _toggle_signal_notice(self, expanded: bool) -> None:
         self.notice_scroll.setVisible(expanded and bool(self.signal_notice.text()))
@@ -1607,6 +1861,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._reset_cache()
         self._refresh_channel_table()
         self.statusBar().showMessage("请选择 BLF 文件")
+        self._update_workflow()
 
     def _clear(self) -> None:
         self._cancel_dbc_import()
@@ -1635,6 +1890,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.dbc_loader:
             self.dbc_loader.wait()
         self._stop()
+        self.plot_timer.stop()
+        self.progress_timer.stop()
+        self.signal_timer.stop()
         if self.scanner:
             self.scanner.stop()
             self.scanner.wait()

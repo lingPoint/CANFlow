@@ -1,6 +1,6 @@
 ![CANFlow Logo](docs/images/canflow-logo.svg)
 
-# CANFlow v3.0.0-dev
+# CANFlow v3.0.1
 
 桌面 BLF 波形回放工具。V2 增加项目、可复用信号组和多纵轴波形。多选 BLF 后按各文件最早采集时间排序，逐文件快速处理 CAN/CAN FD 数据；波形横轴保留原始采集时间和文件间空白。文件时间范围重叠会在导入时阻止回放。
 
@@ -26,7 +26,7 @@ python -m venv .venv
 .venv\Scripts\python.exe run.py
 ```
 
-无需安装 Python 时，可从 [Releases](https://github.com/lingPoint/CANFlow/releases) 下载最新提交对应的 `CANFlow.exe`。每次推送代码后，GitHub Actions 会在 Windows 上运行测试并打包单文件 EXE；构建成功后创建一个以提交 SHA 命名的预发布版本。EXE 不包含 BLF 或 DBC 文件，请自行选择本地记录和配置。
+无需安装 Python 时，可从 [Releases](https://github.com/lingPoint/CANFlow/releases) 下载 `CANFlow.exe`。版本标签（如 `v3.0.1`）会触发 Windows 测试、打包并发布正式版本；分支提交仍生成以提交 SHA 命名的预发布版本。EXE 不包含 BLF 或 DBC 文件，请自行选择本地记录和配置。
 
 开发与测试另装 `requirements-dev.txt`，然后运行 `.venv\Scripts\python.exe -m pytest -q`。
 真实 1 GiB BLF 压测默认跳过；在有足够临时磁盘空间时设置 `CANFLOW_TEST_1GB=1` 并运行 `pytest tests/test_large_blf.py -s`。

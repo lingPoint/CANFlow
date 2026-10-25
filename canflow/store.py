@@ -83,16 +83,17 @@ def write_samples(connection: sqlite3.Connection, rows: list[tuple[str, float, f
 
 
 def nearest_sample(
-    connection: sqlite3.Connection, signal: str, timestamp: float
+    connection: sqlite3.Connection, signal: str, timestamp: float,
+    *, start: float = -math.inf, end: float = math.inf,
 ) -> tuple[float, float] | None:
-    """Find the nearest decoded value without loading a signal's history."""
+    """Find the nearest decoded value in the inclusive interval using the index."""
     before = connection.execute(
-        "SELECT timestamp, value FROM samples WHERE signal = ? AND timestamp <= ? "
-        "ORDER BY timestamp DESC LIMIT 1", (signal, timestamp)
+        "SELECT timestamp, value FROM samples WHERE signal = ? AND timestamp >= ? AND timestamp <= ? "
+        "ORDER BY timestamp DESC LIMIT 1", (signal, start, min(timestamp, end))
     ).fetchone()
     after = connection.execute(
-        "SELECT timestamp, value FROM samples WHERE signal = ? AND timestamp >= ? "
-        "ORDER BY timestamp ASC LIMIT 1", (signal, timestamp)
+        "SELECT timestamp, value FROM samples WHERE signal = ? AND timestamp >= ? AND timestamp <= ? "
+        "ORDER BY timestamp ASC LIMIT 1", (signal, max(timestamp, start), end)
     ).fetchone()
     candidates = [row for row in (before, after) if row is not None]
     return min(candidates, key=lambda row: abs(row[0] - timestamp)) if candidates else None

@@ -279,8 +279,9 @@ def test_visible_sample_control_thickens_only_real_samples(tmp_path: Path) -> No
         window._sync_curves()
         window.show()
         app.processEvents()
-        assert window.sample_emphasis.isVisibleTo(window.pages)
         assert window.display_panel.isHidden()
+        window.display_toggle.click()
+        assert window.sample_emphasis.isVisibleTo(window.pages)
         window.sample_emphasis.setValue(3.5)
         assert window.chart.layers[first].curve.opts["pen"].widthF() == pytest.approx(1.0)
         assert window.chart.layers[second].curve.opts["pen"].widthF() == pytest.approx(1.0)
@@ -337,6 +338,46 @@ def test_measurement_uses_focused_signal_samples_and_clears_with_recording(tmp_p
         window._clear_recordings()
         assert not window.chart.marker_a.isVisible()
         assert not window.chart.marker_b.isVisible()
+    finally:
+        window.close()
+        app.processEvents()
+
+
+@pytest.mark.parametrize("samples, click, expected", [
+    ([-0.1, 1.0], 0.0, 1.0),
+    ([9.0, 10.1], 10.0, 9.0),
+    ([0.0, 10.0], 0.0, 0.0),
+    ([0.0, 10.0], 10.0, 10.0),
+    ([-0.1, 10.1], 0.0, None),
+])
+def test_measurement_snaps_only_to_visible_samples(tmp_path, samples, click, expected):
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow()
+    try:
+        window.plot_timer.stop()
+        key = SignalKey(1, 1, False, "Value")
+        origin = 1700000000.0
+        window.files = [FileInfo(tmp_path / "sample.blf", origin, origin + 11, len(samples), (1,))]
+        window.selected = {key}
+        window._sync_curves()
+        window.chart.focus(key)
+        window.db.executemany("INSERT INTO samples VALUES (?, ?, ?)", [
+            (key.storage_key(), origin + offset, float(index))
+            for index, offset in enumerate(samples)
+        ])
+        window.db.commit()
+        window.plot.setXRange(0, 10, padding=0)
+        window.measure_toggle.setChecked(True)
+        window.chart.measurement_clicked.emit(click)
+        if expected is None:
+            assert window.measure_a is None
+            assert "当前视野内暂无采样点" in window.measure_label.text()
+            assert not window.chart.marker_a.isVisible()
+        else:
+            assert window.measure_a[0] - origin == pytest.approx(expected)
+            assert "暂无采样点" not in window.measure_label.text()
+            assert window.chart.marker_a.value() == pytest.approx(expected)
+            assert window.chart.marker_a.isVisible()
     finally:
         window.close()
         app.processEvents()
@@ -523,10 +564,12 @@ def test_playback_details_panel_can_be_hidden_and_restored() -> None:
     try:
         window._set_playback_details_visible(False, persist=False)
         assert window.playback_details.isHidden()
-        assert window.details_toggle.text() == "显示回放详情"
+        assert window.details_toggle.text() == "查看原始报文"
+        assert not window.timeline.isHidden()
+        assert not window.progress.isHidden()
         window._set_playback_details_visible(True, persist=False)
         assert not window.playback_details.isHidden()
-        assert window.details_toggle.text() == "隐藏回放详情"
+        assert window.details_toggle.text() == "隐藏原始报文"
     finally:
         window.close()
         app.processEvents()
@@ -567,6 +610,90 @@ def test_cursor_readout_and_separate_configuration_page(tmp_path: Path) -> None:
 def test_cursor_clock_uses_capture_time_with_milliseconds() -> None:
     timestamp = datetime(2026, 5, 6, 22, 38, 11, 11_000).timestamp()
     assert cursor_clock_text(timestamp) == "22点38分11秒11毫秒"
+
+
+def test_redesign_header_and_grouped_signal_checkboxes(tmp_path):
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow()
+    try:
+        window.resize(1280, 800)
+        window.project_path = tmp_path / "制动系统验证.canflow.json"
+        window._update_window_title()
+        keys = [SignalKey(1, 0x101, False, "BatterySOC"),
+                SignalKey(1, 0x101, False, "BatteryVoltage"),
+                SignalKey(2, 0x103, False, "InverterTemp")]
+        window.signals = keys
+        window._populate_signals()
+        window.pages.setCurrentIndex(1)
+        window.show()
+        app.processEvents()
+        assert window.width() == 1280
+        assert window.project_button.text() == "项目：制动系统验证"
+        save = next(button for button in window.findChildren(QtWidgets.QToolButton)
+                    if button.toolTip() == "保存项目 (Ctrl+S)")
+        assert not window.project_button.geometry().intersects(save.geometry())
+        first = window.signal_list.item(0)
+        assert first.data(QtCore.Qt.ItemDataRole.UserRole + 2) == "CAN 1  ·  0x101"
+        assert not window.signal_list.item(1).data(QtCore.Qt.ItemDataRole.UserRole + 2)
+        rect = window.signal_list.visualItemRect(first)
+        # Group-heading clicks must not alter the first signal's selection.
+        QtTest.QTest.mouseClick(window.signal_list.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                               pos=rect.topLeft() + QtCore.QPoint(18, 12))
+        assert first.checkState() == QtCore.Qt.CheckState.Unchecked
+        QtTest.QTest.mouseClick(window.signal_list.viewport(), QtCore.Qt.MouseButton.LeftButton,
+                               pos=rect.topLeft() + QtCore.QPoint(18, 56))
+        assert first.checkState() == QtCore.Qt.CheckState.Checked
+        chosen, _ = window._selection_from_list()
+        assert chosen == {keys[0]}
+    finally:
+        window.project_dirty = False
+        window.close()
+
+
+def test_workflow_guides_import_configuration_and_replay(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    window = MainWindow()
+    try:
+        window.progress_timer.stop()
+        assert not window.start_button.isEnabled()
+        assert not window.pause_button.isEnabled()
+        assert not window.stop_button.isEnabled()
+        imported = []
+        monkeypatch.setattr(window, "_add_files", lambda: imported.append(True))
+        window.workflow_action.click()
+        assert imported == [True]
+        window.files = [FileInfo(tmp_path / "sample.blf", 1000, 1010, 2, (1,))]
+        window._update_workflow()
+        assert window.start_button.isEnabled()  # Raw replay does not require a DBC.
+        window.workflow_action.click()
+        assert window.pages.currentIndex() == 1
+        window.mapping = {1: tmp_path / "sample.dbc"}
+        window.selected = {SignalKey(1, 0x123, False, "Speed")}
+        window._update_workflow()
+        window.workflow_action.click()
+        assert window.pages.currentIndex() == 0
+        assert window.workflow_action.text() == "调整信号"
+        window.worker = SimpleNamespace(backfill=False)
+        window._update_workflow()
+        assert not window.start_button.isEnabled()
+        assert window.pause_button.isEnabled()
+        assert window.stop_button.isEnabled()
+        assert not window.clear_files.isEnabled()
+        window.worker.backfill = True
+        window._update_workflow()
+        assert not window.pause_button.isEnabled()
+        assert not window.timeline.isEnabled()
+        window.worker = None
+        window.playhead = 1010
+        window._update_workflow()
+        assert window.start_button.text() == "重新回放"
+        assert window.start_button.isEnabled()
+    finally:
+        window.worker = None
+        window.close()
+        app.processEvents()
 
 
 def test_forty_selected_signals_have_searchable_cursor_values(tmp_path: Path) -> None:
