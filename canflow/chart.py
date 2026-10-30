@@ -15,11 +15,16 @@ PALETTE = (
     "#38bdf8", "#fb7185", "#a3e635", "#fbbf24", "#c084fc", "#2dd4bf",
     "#f97316", "#60a5fa", "#e879f9", "#4ade80", "#facc15", "#f472b6",
 )
+LIGHT_PALETTE = (
+    "#1679a5", "#b94359", "#537c15", "#956b0c", "#8950b1", "#168678",
+    "#b65b20", "#3176bc", "#a33daf", "#278652", "#8d7410", "#b6457a",
+)
 
 
-def signal_color(key: SignalKey) -> str:
+def signal_color(key: SignalKey, theme: str = "浅色") -> str:
     digest = hashlib.sha256(key.storage_key().encode("utf-8")).digest()
-    return PALETTE[int.from_bytes(digest[:2], "big") % len(PALETTE)]
+    palette = PALETTE if theme == "深色" else LIGHT_PALETTE
+    return palette[int.from_bytes(digest[:2], "big") % len(palette)]
 
 
 class TimelineViewBox(pg.ViewBox):
@@ -156,6 +161,7 @@ class CurveLayer:
     samples: pg.ScatterPlotItem
     visible: bool = True
     range_initialized: bool = False
+    custom_color: str | None = None
 
 
 class MultiSignalChart(QtWidgets.QWidget):
@@ -179,7 +185,9 @@ class MultiSignalChart(QtWidgets.QWidget):
                                     background="#101e30")
         self.widget.showGrid(x=True, y=True, alpha=0.2)
         self.time_axis.refresh_label()
-        self.widget.getPlotItem().hideAxis("left")
+        # Keep the grid axis alive without duplicating the per-track Y scales.
+        self.widget.getPlotItem().getAxis("left").setStyle(showValues=False, tickLength=0)
+        self.widget.getPlotItem().getAxis("left").setWidth(0)
         self.widget.getPlotItem().hideButtons()
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -210,13 +218,14 @@ class MultiSignalChart(QtWidgets.QWidget):
         view.setMouseEnabled(x=False, y=False)
         self.widget.scene().addItem(view)
         view.setXLink(self.master_view)
-        curve = pg.PlotDataItem([], [], pen=pg.mkPen(color or signal_color(key), width=1),
+        effective_color = color or signal_color(key, self.theme)
+        curve = pg.PlotDataItem([], [], pen=pg.mkPen(effective_color, width=1),
                                 autoDownsample=True, clipToView=True)
         view.addItem(curve)
         samples = pg.ScatterPlotItem([], [], symbol="o", size=self._sample_size(),
-                                     pen=None, brush=pg.mkBrush(color or signal_color(key)))
+                                     pen=None, brush=pg.mkBrush(effective_color))
         view.addItem(samples)
-        layer = CurveLayer(key, label, unit, color or signal_color(key), view, curve, samples)
+        layer = CurveLayer(key, label, unit, effective_color, view, curve, samples, custom_color=color)
         self.layers[key] = layer
         self._sync_geometry()
         if self.focused is None:
@@ -351,6 +360,15 @@ class MultiSignalChart(QtWidgets.QWidget):
         self.widget.setBackground(background)
         for axis_name in ("left", "bottom"):
             self.widget.getPlotItem().getAxis(axis_name).setTextPen(foreground)
+        for layer in self.layers.values():
+            layer.color = layer.custom_color or signal_color(layer.key, theme)
+            layer.curve.setPen(pg.mkPen(layer.color, width=1))
+            layer.samples.setBrush(pg.mkBrush(layer.color))
+        for marker, light, dark in ((self.marker_a, "#a86b12", "#fbbf24"),
+                                    (self.marker_b, "#b94359", "#fb7185")):
+            color = dark if theme == "深色" else light
+            marker.setPen(pg.mkPen(color, width=1))
+            marker.label.setColor(color)
         self.axis_panel.set_theme(theme)
 
     def y_range(self, key: SignalKey) -> tuple[float, float]:

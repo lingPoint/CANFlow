@@ -9,3 +9,5 @@ __pycache__/
 project1.canflow.json
 tests/CANSystem_CAN2.blf
 tests/CAN_FD_Demo.dbc
+
+dist/

@@ -1,3 +1,5 @@
+> 此文档记录 3.0.1 的历史设计验证。当前多窗口重构参见 [2026-10-30 验证记录](docs/design/2026-10-30/review.md)。
+
 # CANFlow native desktop design QA
 
 final result: passed
@@ -26,7 +28,7 @@ image has been altered for delivery. CSS dimensions do not apply to this native 
   labels/scales, checkbox rows, message grouping, and metadata legibility.
 - Screenshots come from real native controls and 301 generated, non-sensitive
   CAN frames, with decoded data and actual sample measurement. Reproduce using
-  `.venv-test/Scripts/python.exe -m scripts.capture_redesign`.
+  历史版本中的 `scripts.capture_redesign`（当前脚本已改为生成多窗口截图）.
 
 ## Findings and resolution
 

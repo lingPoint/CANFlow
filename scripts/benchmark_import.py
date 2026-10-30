@@ -17,7 +17,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 from PySide6 import QtCore, QtGui, QtWidgets
 from can.io.blf import FILE_HEADER_STRUCT, timestamp_to_systemtime
 
-from canflow.app import MainWindow
+from canflow.app import AnalysisWindow
 from canflow.workers import ScanCache
 
 
@@ -71,8 +71,8 @@ def main():
     if font.exists():
         QtGui.QFontDatabase.addApplicationFont(str(font))
         app.setFont(QtGui.QFont("Microsoft YaHei UI", 9))
-    window = MainWindow()
-    window.pages.setCurrentIndex(1)
+    window = AnalysisWindow()
+    window.show_editor("mapping")
     window.show()
     app.processEvents()
     gaps = []

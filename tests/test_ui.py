@@ -10,7 +10,7 @@ import pytest
 from PySide6 import QtCore, QtTest, QtWidgets
 
 from canflow import __version__
-from canflow.app import MainWindow, cursor_clock_text
+from canflow.app import AnalysisWindow, cursor_clock_text
 from canflow.chart import MultiSignalChart
 from canflow.core import FileInfo, SignalKey
 from canflow.core import available_signals, load_databases, prepare_sequence
@@ -22,7 +22,7 @@ def test_plot_refresh_skips_unchanged_data_and_not_new_samples(tmp_path, monkeyp
     from canflow.store import write_samples, connect
     import canflow.app as module
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         key = SignalKey(1, 1, False, "Value")
         window.files = [FileInfo(tmp_path / "s.blf", 1000, 1010, 2, (1,))]
@@ -56,7 +56,7 @@ def test_plot_refresh_skips_unchanged_data_and_not_new_samples(tmp_path, monkeyp
 
 def test_raw_snapshot_reuses_cells_and_does_not_duplicate_rows():
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         rows = [(1700000000 + i, i % 16 + 1, 0x123, "CAN", "01") for i in range(1000)]
         window._append_raw(rows)
@@ -84,7 +84,7 @@ def test_window_replays_selected_signal(tmp_path: Path) -> None:
         'BO_ 291 Example: 1 ECU\n SG_ Speed : 0|8@1+ (0.5,0) [0|127.5] "km/h" ECU\n',
         encoding="utf-8",
     )
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window._scan_done(prepare_sequence([blf]))
         window.mapping = {1: dbc}
@@ -128,10 +128,9 @@ def test_window_replays_out_of_order_multichannel_timestamps(tmp_path: Path) -> 
         'BO_ 291 Example: 1 ECU\n SG_ Speed : 0|8@1+ (1,0) [0|255] "km/h" ECU\n',
         encoding="utf-8",
     )
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         assert f"v{__version__}" in window.windowTitle()
-        assert any(label.text() == f"CANFlow v{__version__}" for label in window.findChildren(QtWidgets.QLabel))
         info = prepare_sequence([blf])[0]
         window._scan_done([info])
         window.mapping = {1: dbc, 2: dbc}
@@ -160,7 +159,7 @@ def test_window_replays_out_of_order_multichannel_timestamps(tmp_path: Path) -> 
 def test_recorded_battery_soc_is_drawn(sample_recording: tuple[Path, Path]) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     blf, dbc = sample_recording
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window._scan_done(prepare_sequence([blf]))
         window.mapping = {1: dbc}
@@ -222,7 +221,7 @@ def test_recorded_battery_soc_is_drawn(sample_recording: tuple[Path, Path]) -> N
 
 def test_failed_replay_does_not_start_backfill(tmp_path: Path) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         key = SignalKey(1, 0x123, False, "Speed")
         window.files = [FileInfo(tmp_path / "missing.blf", 1000, 1010, 2, (1,))]
@@ -268,7 +267,7 @@ def test_chart_scales_independent_y_ranges_together() -> None:
 
 def test_visible_sample_control_thickens_only_real_samples(tmp_path: Path) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.plot_timer.stop()
         window.settings = QtCore.QSettings(str(tmp_path / "settings.ini"), QtCore.QSettings.Format.IniFormat)
@@ -281,7 +280,7 @@ def test_visible_sample_control_thickens_only_real_samples(tmp_path: Path) -> No
         app.processEvents()
         assert window.display_panel.isHidden()
         window.display_toggle.click()
-        assert window.sample_emphasis.isVisibleTo(window.pages)
+        assert window.sample_emphasis.isVisibleTo(window.display_panel)
         window.sample_emphasis.setValue(3.5)
         assert window.chart.layers[first].curve.opts["pen"].widthF() == pytest.approx(1.0)
         assert window.chart.layers[second].curve.opts["pen"].widthF() == pytest.approx(1.0)
@@ -300,7 +299,7 @@ def test_visible_sample_control_thickens_only_real_samples(tmp_path: Path) -> No
 
 def test_measurement_uses_focused_signal_samples_and_clears_with_recording(tmp_path: Path) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.plot_timer.stop()
         first = SignalKey(1, 1, False, "First")
@@ -352,7 +351,7 @@ def test_measurement_uses_focused_signal_samples_and_clears_with_recording(tmp_p
 ])
 def test_measurement_snaps_only_to_visible_samples(tmp_path, samples, click, expected):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.plot_timer.stop()
         key = SignalKey(1, 1, False, "Value")
@@ -405,7 +404,7 @@ def test_auto_y_immediately_restores_existing_curves() -> None:
 
 def test_auto_y_button_fits_all_tracks_in_current_time_window(tmp_path: Path) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.plot_timer.stop()
         window.settings = QtCore.QSettings(str(tmp_path / "settings.ini"), QtCore.QSettings.Format.IniFormat)
@@ -438,7 +437,7 @@ def test_auto_y_button_fits_all_tracks_in_current_time_window(tmp_path: Path) ->
 
 def test_fit_xy_keeps_full_capture_range_and_rescales_each_track(tmp_path: Path) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.plot_timer.stop()
         origin = 1_700_000_000
@@ -491,7 +490,7 @@ def test_window_opens_project_and_restores_mapping_and_selection(
     key = SignalKey(1, 0x64, False, "BatterySOC")
     project = tmp_path / "demo.canflow.json"
     save_project(project, {1: dbc}, {key})
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window._open_project(project)
         assert window.project_path == project
@@ -508,7 +507,7 @@ def test_unresolved_signal_can_be_removed_and_marks_project_dirty_immediately(tm
     key = SignalKey(1, 0x123, False, "Speed")
     project = tmp_path / "missing.canflow.json"
     save_project(project, {}, (), unresolved_selected=(SignalReference(key, "old-definition"),))
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window._open_project(project)
         assert key in window.unresolved_selected
@@ -536,7 +535,7 @@ def test_replacing_dbc_preserves_incompatible_selection_as_unresolved(tmp_path: 
     first.write_text(template.format(scale=1), encoding="utf-8")
     second.write_text(template.format(scale=2), encoding="utf-8")
     key = SignalKey(1, 0x123, False, "Speed")
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window._assign_dbc_path(first, 1)
         from tests.test_import_performance import wait_import
@@ -560,24 +559,22 @@ def test_replacing_dbc_preserves_incompatible_selection_as_unresolved(tmp_path: 
 
 def test_playback_details_panel_can_be_hidden_and_restored() -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window._set_playback_details_visible(False, persist=False)
         assert window.playback_details.isHidden()
-        assert window.details_toggle.text() == "查看原始报文"
         assert not window.timeline.isHidden()
         assert not window.progress.isHidden()
         window._set_playback_details_visible(True, persist=False)
         assert not window.playback_details.isHidden()
-        assert window.details_toggle.text() == "隐藏原始报文"
     finally:
         window.close()
         app.processEvents()
 
 
-def test_cursor_readout_and_separate_configuration_page(tmp_path: Path) -> None:
+def test_cursor_readout_and_modeless_configuration_keep_canvas_visible(tmp_path: Path) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         key = SignalKey(1, 0x123, False, "Speed")
         window.files = [FileInfo(tmp_path / "sample.blf", 1000, 1010, 2, (1,))]
@@ -594,14 +591,15 @@ def test_cursor_readout_and_separate_configuration_page(tmp_path: Path) -> None:
         assert window.sidebar.findChildren(QtWidgets.QWidget, "timeCard") == []
         assert window.curve_table.item(0, 1).text() == "Speed"
         assert window.curve_table.item(0, 2).text() == "20"
-        assert window.pages.currentIndex() == 0
         assert window.curve_table.parentWidget() is window.sidebar
-        window.pages.setCurrentIndex(1)
-        assert window.file_table.isVisibleTo(window.pages)
-        assert window.signal_list.isVisibleTo(window.pages)
-        assert not window.chart.isVisibleTo(window.pages)
-        window.pages.setCurrentIndex(0)
-        assert window.chart.isVisibleTo(window.pages)
+        window.show()
+        window.show_editor("files")
+        window.show_editor("signals")
+        app.processEvents()
+        assert window.file_table.isVisibleTo(window.files_dialog)
+        assert window.signal_list.isVisibleTo(window.signals_dialog)
+        assert window.chart.isVisibleTo(window)
+        assert not window.findChildren(QtWidgets.QTabWidget)
     finally:
         window.close()
         app.processEvents()
@@ -614,7 +612,7 @@ def test_cursor_clock_uses_capture_time_with_milliseconds() -> None:
 
 def test_redesign_header_and_grouped_signal_checkboxes(tmp_path):
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.resize(1280, 800)
         window.project_path = tmp_path / "制动系统验证.canflow.json"
@@ -624,14 +622,11 @@ def test_redesign_header_and_grouped_signal_checkboxes(tmp_path):
                 SignalKey(2, 0x103, False, "InverterTemp")]
         window.signals = keys
         window._populate_signals()
-        window.pages.setCurrentIndex(1)
         window.show()
+        window.show_editor("signals")
         app.processEvents()
         assert window.width() == 1280
-        assert window.project_button.text() == "项目：制动系统验证"
-        save = next(button for button in window.findChildren(QtWidgets.QToolButton)
-                    if button.toolTip() == "保存项目 (Ctrl+S)")
-        assert not window.project_button.geometry().intersects(save.geometry())
+        assert window.project_label.text() == "制动系统验证"
         first = window.signal_list.item(0)
         assert first.data(QtCore.Qt.ItemDataRole.UserRole + 2) == "CAN 1  ·  0x101"
         assert not window.signal_list.item(1).data(QtCore.Qt.ItemDataRole.UserRole + 2)
@@ -654,27 +649,17 @@ def test_workflow_guides_import_configuration_and_replay(tmp_path, monkeypatch):
     from types import SimpleNamespace
 
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.progress_timer.stop()
         assert not window.start_button.isEnabled()
         assert not window.pause_button.isEnabled()
         assert not window.stop_button.isEnabled()
-        imported = []
-        monkeypatch.setattr(window, "_add_files", lambda: imported.append(True))
-        window.workflow_action.click()
-        assert imported == [True]
         window.files = [FileInfo(tmp_path / "sample.blf", 1000, 1010, 2, (1,))]
         window._update_workflow()
         assert window.start_button.isEnabled()  # Raw replay does not require a DBC.
-        window.workflow_action.click()
-        assert window.pages.currentIndex() == 1
-        window.mapping = {1: tmp_path / "sample.dbc"}
-        window.selected = {SignalKey(1, 0x123, False, "Speed")}
-        window._update_workflow()
-        window.workflow_action.click()
-        assert window.pages.currentIndex() == 0
-        assert window.workflow_action.text() == "调整信号"
+        window.show_editor("mapping")
+        assert window.mapping_dialog.isVisible()
         window.worker = SimpleNamespace(backfill=False)
         window._update_workflow()
         assert not window.start_button.isEnabled()
@@ -698,7 +683,7 @@ def test_workflow_guides_import_configuration_and_replay(tmp_path, monkeypatch):
 
 def test_forty_selected_signals_have_searchable_cursor_values(tmp_path: Path) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.plot_timer.stop()
         window.files = [FileInfo(tmp_path / "sample.blf", 1000, 1010, 40, (1,))]
@@ -728,7 +713,7 @@ def test_forty_selected_signals_have_searchable_cursor_values(tmp_path: Path) ->
 
 def test_display_settings_toggle_stays_visible_in_short_window() -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.show()
         window.resize(1114, 700)
@@ -736,13 +721,12 @@ def test_display_settings_toggle_stays_visible_in_short_window() -> None:
         app.processEvents()
         assert window.height() == 700
         assert window.display_panel.isVisible()
-        assert window.display_toggle.geometry().bottom() < window.sidebar.height()
-        assert window.display_panel.geometry().bottom() < window.sidebar.height()
+        assert window.commands.widgetForAction(window.commands.actions()[-2]) is window.display_toggle
 
-        window.display_toggle.click()
+        window.display_panel.close()
         app.processEvents()
         assert window.display_toggle.isVisible()
-        assert window.display_toggle.geometry().bottom() < window.sidebar.height()
+        assert not window.display_panel.isVisible()
     finally:
         window.close()
         app.processEvents()

@@ -18,7 +18,6 @@ from PySide6 import QtCore, QtGui, QtWidgets
 PROJECT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT))
 
-from canflow.app import MainWindow
 from canflow.core import SignalKey, available_signals, load_databases, prepare_sequence
 
 
@@ -51,84 +50,8 @@ def make_demo(folder: Path) -> tuple[Path, Path]:
 
 
 def capture(output: Path, *, time_mode: str = "relative") -> None:
-    app = QtWidgets.QApplication([])
-    font = Path(r"C:\Windows\Fonts\msyh.ttc")
-    if font.exists():
-        QtGui.QFontDatabase.addApplicationFont(str(font))
-        app.setFont(QtGui.QFont("Microsoft YaHei UI", 9))
-    app.setStyle("Fusion")
-    with tempfile.TemporaryDirectory(prefix="canflow-screenshot-") as directory:
-        blf, dbc = make_demo(Path(directory))
-        window = MainWindow()
-        try:
-            window.resize(1600, 920)
-            window.show()
-            window.wave_splitter.setSizes([450, 1150])
-            window._set_playback_details_visible(False, persist=False)
-            window.file_table.setColumnWidth(0, 125)
-            window.file_table.setColumnWidth(1, 120)
-            window.file_table.setColumnWidth(2, 55)
-            window._scan_done(prepare_sequence([blf]))
-            window.time_mode_combo.blockSignals(True)
-            window.time_mode_combo.setCurrentIndex(1 if time_mode == "capture" else 0)
-            window.time_mode_combo.blockSignals(False)
-            window.chart.set_time_mode(time_mode)
-            window.mapping = {1: dbc}
-            window.channel_table.item(0, 1).setText(dbc.name)
-            window.signals = available_signals(load_databases(window.mapping))
-            window._populate_signals()
-            for row in range(window.signal_list.count()):
-                window.signal_list.item(row).setCheckState(QtCore.Qt.CheckState.Checked)
-            window._start()
-            deadline = time.monotonic() + 10
-            while window.worker is not None and time.monotonic() < deadline:
-                app.processEvents()
-                time.sleep(0.01)
-            if window.worker is not None:
-                raise RuntimeError("Demo replay did not finish")
-            window.follow.setChecked(False)
-            window.plot.setXRange(0, 30, padding=0)
-            window.plot.setYRange(0, 80, padding=0)
-            window._refresh_plot()
-            window.chart.cursor.setPos(15)
-            window.chart.cursor.show()
-            window._update_cursor_values(15)
-            app.processEvents()
-            if any(len(curve.xData) == 0 for curve in window.curves.values()):
-                raise RuntimeError("A selected demo signal has no plotted points")
-            if window.raw_table.rowCount() != 301:
-                raise RuntimeError("The raw frame table does not show the full demo capture")
-            output.parent.mkdir(parents=True, exist_ok=True)
-            if not window.grab().save(str(output), "PNG"):
-                raise RuntimeError(f"Could not save {output}")
-            window.signal_timer.stop()
-            demo_keys = set(window.selected)
-            extra_keys = [SignalKey(1, 0x200 + index, False, f"DemoSignal{index:02d}")
-                          for index in range(37)]
-            window.selected.update(extra_keys)
-            window._sync_curves()
-            origin = window.files[0].first
-            window.db.executemany("INSERT INTO samples VALUES (?, ?, ?)", [
-                (key.storage_key(), origin + 15, index + 10)
-                for index, key in enumerate(extra_keys)
-            ])
-            window.db.commit()
-            for row in range(window.curve_table.rowCount()):
-                item = window.curve_table.item(row, 0)
-                if item.data(QtCore.Qt.ItemDataRole.UserRole) not in demo_keys:
-                    item.setCheckState(QtCore.Qt.CheckState.Unchecked)
-            window._update_cursor_values(15)
-            app.processEvents()
-            dense_output = output.with_name("canflow-dense-signals-screenshot.png")
-            if not window.grab().save(str(dense_output), "PNG"):
-                raise RuntimeError(f"Could not save {dense_output}")
-            window.pages.setCurrentIndex(1)
-            app.processEvents()
-            config_output = output.with_name("canflow-config-screenshot.png")
-            if not window.grab().save(str(config_output), "PNG"):
-                raise RuntimeError(f"Could not save {config_output}")
-        finally:
-            window.close()
+    from scripts.capture_redesign import capture as capture_workspace
+    capture_workspace(output.parent)
 
 
 if __name__ == "__main__":
