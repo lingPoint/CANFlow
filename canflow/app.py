@@ -568,27 +568,15 @@ class AnalysisWindow(QtWidgets.QMainWindow):
     def _set_display_settings_visible(self, visible: bool) -> None:
         self.display_panel.setVisible(visible)
 
-    def _filter_curve_rows(self, query: str) -> None:
-        needle = query.strip().casefold()
-        shown = 0
-        for row in range(self.curve_table.rowCount()):
-            item = self.curve_table.item(row, 0)
-            key = item.data(QtCore.Qt.ItemDataRole.UserRole)
-            matches = not needle or (isinstance(key, SignalKey) and
-                                     (needle in key.name.casefold() or needle in key.label().casefold()))
-            self.curve_table.setRowHidden(row, not matches)
-            shown += matches
-        total = self.curve_table.rowCount()
-        self.curve_footer.setText(
-            f"显示 {shown} / {total} 个信号 · 点击聚焦 · 勾选显示" if total else "暂无信号，请从顶部添加信号"
-        )
-
     def _update_curve_summary(self) -> None:
         selected = self.curve_table.rowCount()
         displayed = sum(layer.visible for layer in self.chart.layers.values())
         self.signal_count_label.setText(f"{selected} 个信号")
         self.chart_summary_label.setText(f"{selected} 条已选 · {displayed} 条显示")
-        self._filter_curve_rows(self.curve_search.text())
+        self.curve_footer.setText(
+            f"显示 {selected} / {selected} 个信号 · 点击聚焦 · 勾选显示"
+            if selected else "暂无信号，请从顶部添加信号"
+        )
 
     def _curve_visibility_changed(self, item: QtWidgets.QTableWidgetItem) -> None:
         if item.column() != 0:
