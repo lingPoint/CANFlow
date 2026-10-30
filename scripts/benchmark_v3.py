@@ -69,7 +69,7 @@ def rss() -> int:
 def ui_benchmark(directory, label, info, dbc, keys):
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     from PySide6 import QtCore, QtGui, QtWidgets
-    from canflow.app import MainWindow
+    from canflow.app import AnalysisWindow
     from canflow.core import available_signals, load_databases
     QtCore.QSettings.setDefaultFormat(QtCore.QSettings.Format.IniFormat)
     QtCore.QSettings.setPath(QtCore.QSettings.Format.IniFormat, QtCore.QSettings.Scope.UserScope,
@@ -80,7 +80,7 @@ def ui_benchmark(directory, label, info, dbc, keys):
     if font.exists():
         QtGui.QFontDatabase.addApplicationFont(str(font))
         app.setFont(QtGui.QFont("Microsoft YaHei UI", 9))
-    window = MainWindow()
+    window = AnalysisWindow()
     window.resize(1600, 1100)
     gaps = []
     last_tick = [time.perf_counter()]
@@ -109,7 +109,6 @@ def ui_benchmark(directory, label, info, dbc, keys):
         window._update_curve_summary()
         window.follow.setChecked(False)
         window.plot.setXRange(0, info.last - info.first, padding=0)
-        window.pages.setCurrentIndex(0)
         window.show()
         app.processEvents()
         window._start()

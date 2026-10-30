@@ -10,7 +10,7 @@ import can
 import pytest
 from PySide6 import QtCore, QtWidgets
 
-from canflow.app import MainWindow
+from canflow.app import AnalysisWindow
 from canflow.core import SignalKey, available_signals, inspect_file, load_databases
 from canflow.store import connect
 from canflow.workers import ReplayWorker
@@ -126,7 +126,7 @@ def test_one_gib_blf_scans_and_replays_with_bounded_memory(large_workspace: Path
             connection.close()
 
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        window = MainWindow()
+        window = AnalysisWindow()
         try:
             window._scan_done([info])
             window.mapping = {1: dbc}
@@ -223,7 +223,7 @@ def test_one_gib_multichannel_blf_maps_each_channel_and_replays_ui(large_workspa
             connection.close()
 
         app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-        window = MainWindow()
+        window = AnalysisWindow()
         try:
             window._scan_done([info])
             window.mapping = mapping

@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 780 256" role="img" aria-label="CANFlow Logo">
+  <rect width="780" height="256" rx="32" fill="#111d2f"/>
+  <g transform="translate(24 24) scale(.8125)">
+    <rect width="256" height="256" rx="58" fill="#172337"/>
+    <path d="M190 65a92 92 0 1 0 0 126" fill="none" stroke="#49c7f5" stroke-width="18" stroke-linecap="round"/>
+    <path d="M65 128h39l17-36 28 72 18-36h39" fill="none" stroke="#66e1d2" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+    <circle cx="65" cy="128" r="8" fill="#66e1d2"/>
+    <circle cx="206" cy="128" r="8" fill="#66e1d2"/>
+  </g>
+  <text x="264" y="153" fill="#e8effa" font-family="Segoe UI, Arial, sans-serif" font-size="82" font-weight="700" letter-spacing="-2">CAN<tspan fill="#49c7f5">Flow</tspan></text>
+  <text x="269" y="197" fill="#93a4bd" font-family="Segoe UI, Arial, sans-serif" font-size="25" letter-spacing="2">BLF WAVEFORM REPLAY</text>
+</svg>

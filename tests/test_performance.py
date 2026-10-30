@@ -6,6 +6,31 @@ from canflow.core import SignalKey, decode_selected, load_databases
 from canflow.store import connect, plot_points_with_samples, write_samples
 
 
+@pytest.mark.parametrize("timestamp, start, end, expected", [
+    (0.0, 0.0, 10.0, (1.0, 2.0)),
+    (10.0, 0.0, 10.0, (9.0, 3.0)),
+    (-1.0, 0.0, 10.0, (1.0, 2.0)),
+    (11.0, 0.0, 10.0, (9.0, 3.0)),
+    (5.0, 0.0, 10.0, (1.0, 2.0)),
+    (5.0, 2.0, 8.0, None),
+    (1.0, 1.0, 1.0, (1.0, 2.0)),
+    (5.0, 10.0, 0.0, None),
+])
+def test_nearest_sample_with_inclusive_bounds(tmp_path, timestamp, start, end, expected):
+    from canflow.store import nearest_sample
+    db = connect(tmp_path / "cache.sqlite")
+    try:
+        write_samples(db, [("s", -0.1, 1.0), ("s", 1.0, 2.0),
+                           ("s", 9.0, 3.0), ("s", 10.1, 4.0),
+                           ("other", 5.0, 99.0)])
+        assert nearest_sample(db, "s", timestamp, start=start, end=end) == expected
+        # Cursor lookups retain their original unbounded behavior.
+        assert nearest_sample(db, "s", 0.0) == (-0.1, 1.0)
+        assert nearest_sample(db, "missing", timestamp, start=start, end=end) is None
+    finally:
+        db.close()
+
+
 def test_overview_preserves_spikes_real_markers_and_exact_view_edges(tmp_path):
     from canflow.store import configure_overview
     db = connect(tmp_path / "cache.sqlite")

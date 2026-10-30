@@ -1,3 +1,4 @@
+import os
 import time
 import zlib
 from pathlib import Path
@@ -117,7 +118,10 @@ def test_database_cache_invalidation_failure_and_capacity(sample_recording, tmp_
     cache = DatabaseCache(capacity=1)
     first = cache.load(path)
     assert cache.load(path) is first
+    previous_stat = path.stat()
     path.write_text(path.read_text().replace("(2,-50)", "(4,-50)"))
+    # Explicitly advance mtime: Windows can coalesce immediate same-size writes.
+    os.utime(path, ns=(previous_stat.st_atime_ns, previous_stat.st_mtime_ns + 1_000_000_000))
     changed = cache.load(path)
     assert changed is not first
     assert changed.messages[0].signals[0].scale == 4
@@ -149,11 +153,11 @@ def wait_import(app, window):
 
 def test_dbc_assignment_is_background_atomic_and_reuses_parse(tmp_path, monkeypatch, sample_recording):
     import cantools
-    from canflow.app import MainWindow
+    from canflow.app import AnalysisWindow
     from canflow.core import SignalKey
     _, dbc = sample_recording
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     original = cantools.database.load_file
     calls = []
     def slow(*args, **kwargs):
@@ -190,10 +194,10 @@ def test_dbc_assignment_is_background_atomic_and_reuses_parse(tmp_path, monkeypa
 def test_new_project_discards_pending_dbc_and_selection(sample_recording, monkeypatch):
     import threading
     import cantools
-    from canflow.app import MainWindow
+    from canflow.app import AnalysisWindow
     _, dbc = sample_recording
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     gate = threading.Event()
     entered = threading.Event()
     original = cantools.database.load_file
@@ -218,9 +222,9 @@ def test_new_project_discards_pending_dbc_and_selection(sample_recording, monkey
 
 
 def test_scan_progress_cancel_and_overlap_remain_atomic(tmp_path, monkeypatch):
-    from canflow.app import MainWindow
+    from canflow.app import AnalysisWindow
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     files = []
     for i in range(2):
         path = tmp_path / f"{i}.blf"
@@ -268,10 +272,10 @@ def test_scan_progress_cancel_and_overlap_remain_atomic(tmp_path, monkeypatch):
 
 
 def test_incremental_signal_population_preserves_pending_selection_and_can_be_cleared(sample_recording):
-    from canflow.app import MainWindow
+    from canflow.app import AnalysisWindow
     from canflow.core import SignalKey
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
-    window = MainWindow()
+    window = AnalysisWindow()
     try:
         window.signals = [SignalKey(1, i, False, "Value") for i in range(10000)]
         window.selected = {window.signals[-1]}

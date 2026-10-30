@@ -4,6 +4,8 @@ on:
   push:
     branches:
       - '**'
+    tags:
+      - 'v*'
   workflow_dispatch:
 
 permissions:
@@ -58,20 +60,34 @@ jobs:
           path: dist/CANFlow.exe
           if-no-files-found: error
 
-      - name: Publish commit release
+      - name: Publish release
         shell: pwsh
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $tag = "build-$env:GITHUB_SHA"
+          $versionRelease = $env:GITHUB_REF_TYPE -eq 'tag'
+          if ($versionRelease) {
+            $version = python -c "from canflow import __version__; print(__version__)"
+            if ($LASTEXITCODE -ne 0 -or $env:GITHUB_REF_NAME -ne "v$version") {
+              throw 'Version tag does not match canflow.__version__'
+            }
+          }
+          $tag = if ($versionRelease) { $env:GITHUB_REF_NAME } else { "build-$env:GITHUB_SHA" }
+          $title = if ($versionRelease) { "CANFlow $tag" } else { "CANFlow $($env:GITHUB_SHA.Substring(0, 7))" }
+          $releaseFlags = if ($versionRelease) { @('--verify-tag', '--latest') } else { @('--prerelease', '--latest=false') }
+          $notesPath = "docs/releases/$($env:GITHUB_REF_NAME -replace '^v', '').md"
+          $notesFlags = if ($versionRelease -and (Test-Path -LiteralPath $notesPath)) {
+            @('--notes-file', $notesPath)
+          } else {
+            @('--notes', "Windows EXE built from commit $env:GITHUB_SHA.")
+          }
           gh release view $tag *> $null
           if ($LASTEXITCODE -ne 0) {
             gh release create $tag dist/CANFlow.exe `
               --target $env:GITHUB_SHA `
-              --title "CANFlow $($env:GITHUB_SHA.Substring(0, 7))" `
-              --notes "Windows EXE built from commit $env:GITHUB_SHA." `
-              --prerelease `
-              --latest=false
+              --title $title `
+              @notesFlags `
+              @releaseFlags
             if ($LASTEXITCODE -ne 0) {
               throw "Failed to publish release $tag"
             }
