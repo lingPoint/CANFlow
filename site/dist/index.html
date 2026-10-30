@@ -4,18 +4,18 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#101b2c">
-  <meta name="description" content="CANFlow 是桌面 BLF 波形回放工具：逐文件处理 CAN/CAN FD 记录，按 DBC 解码信号，在原始采集时间轴上查看多轨波形。">
-  <title>CANFlow · BLF 波形回放</title>
+  <meta name="description" content="CANFlow v3.1.0 支持多个独立分析窗口、同一窗口多 BLF 串联回放，以及录制期间离线回看已保存的历史记录。">
+  <title>CANFlow v3.1.0 · 多窗口 BLF 离线分析</title>
   <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='14' fill='%23101b2c'/%3E%3Cpath d='M10 32h11l7-15 10 30 7-15h9' fill='none' stroke='%2366e1d2' stroke-width='5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="styles.css?v=6">
 </head>
 <body>
   <a class="skip" href="#main">跳转到正文</a>
   <header class="site-header">
     <div class="wrap header-inner">
       <a class="brand" href="#top" aria-label="CANFlow 首页"><span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 44 44"><path d="M4 22h8l5-11 9 22 6-11h8"/></svg></span><span>CAN<span>Flow</span></span></a>
-      <nav aria-label="页面导航"><a href="#capabilities">功能</a><a href="#workflow">使用流程</a><a href="#start">开始使用</a></nav>
-      <a class="header-link" href="https://github.com/lingPoint/CANFlow" target="_blank" rel="noopener noreferrer">查看源码 <span aria-hidden="true">↗</span></a>
+      <nav aria-label="页面导航"><a href="#capabilities">核心痛点</a><a href="#reuse">信号复用</a><a href="#workflow">使用流程</a><a href="#start">开始使用</a></nav>
+      <a class="header-link" href="https://github.com/lingPoint/CANFlow/releases">下载</a>
     </div>
   </header>
 
@@ -23,49 +23,62 @@
     <section class="hero" id="top">
       <div class="wrap hero-grid">
         <div class="hero-copy">
-          <p class="eyebrow"><span class="eyebrow-line"></span> CAN / CAN FD · BLF 可视化分析</p>
-          <h1>让记录里的<br><em>信号变化</em>清晰可见。</h1>
-          <p class="hero-lead">CANFlow 将 BLF 记录中的报文按 DBC 解码成信号波形。按原始采集时间查看多条曲线，快速定位变化，保留文件之间的时间空白。</p>
-          <div class="hero-actions"><a class="button primary" href="#start">开始使用 <span aria-hidden="true">↗</span></a><a class="button text-button" href="#capabilities">了解功能 <span aria-hidden="true">↓</span></a></div>
-          <p class="hero-note">Windows 桌面应用 · Python 3.10+</p>
+          <p class="eyebrow"><span class="eyebrow-line"></span> CAN / CAN FD · 多窗口离线分析</p>
+          <h1>多份记录，<em>独立对照。</em><br>多段数据，<em>连续回放。</em></h1>
+          <p class="hero-lead">在多个独立分析窗口中查看不同记录，为每个窗口配置 DBC 和信号；同一窗口内按采集时间串联回放多段 BLF。录制工具继续采集时，也能离线回看已保存的历史文件。</p>
+          <div class="hero-actions"><a class="button primary" href="#start">开始使用</a><a class="button text-button" href="#capabilities">查看解决方案</a></div>
+          <p class="hero-note">v3.1.0 功能介绍 · Windows 桌面应用<br>内容更新 · 2026-10-30</p>
         </div>
         <div class="hero-visual">
-          <div class="visual-label"><span class="live-mark"></span> CANFlow 波形视图 <span>示例数据</span></div>
-          <img src="assets/waveform.png" width="1600" height="900" alt="CANFlow 桌面波形视图，显示信号列表与三条独立纵轴的波形" fetchpriority="high">
-          <div class="visual-caption"><span>01 / 03</span><span>原始时间轴 · 独立 Y 轴 · 游标读数</span></div>
+          <div class="visual-label"><span class="live-mark"></span> CANFlow 多窗口分析 <span>示例数据</span></div>
+          <img src="assets/workspace-310.png" width="1600" height="1024" alt="CANFlow v3.1.0 正式程序：两个独立分析窗口分别显示示例 BLF 的信号与波形" fetchpriority="high">
+          <div class="visual-caption"><span>01 / 03</span><span>独立窗口 · 原始时间轴 · 游标测量</span></div>
         </div>
       </div>
-      <div class="wrap hero-bottom" aria-hidden="true"><span>从原始报文到信号波形</span><span class="track-line"></span><span>01 — 04</span></div>
+      <div class="wrap hero-bottom" aria-hidden="true"><span>多窗口对照 · 多段串联 · 历史回看</span><span class="track-line"></span><span>CANFlow</span></div>
     </section>
 
     <section class="section capabilities" id="capabilities">
       <div class="wrap">
-        <div class="section-head"><div><p class="kicker">核心能力 / 01</p><h2>围绕回放与分析而设计</h2></div><p>从多文件导入到信号查看，操作集中在一个桌面界面。</p></div>
-        <div class="feature-grid">
-          <article class="feature"><span class="feature-index">01</span><div class="feature-icon" aria-hidden="true">▤</div><h3>逐文件回放 BLF</h3><p>多选记录后，按各文件首帧时间排序并逐个处理。波形沿用采集时间；时间范围重叠会在导入时提示。</p></article>
-          <article class="feature"><span class="feature-index">02</span><div class="feature-icon" aria-hidden="true">⌁</div><h3>DBC 信号解码</h3><p>为通道指定 DBC，再选择要看的信号。没有 DBC 映射的通道仍可查看原始 CAN/CAN FD 报文。</p></article>
-          <article class="feature"><span class="feature-index">03</span><div class="feature-icon" aria-hidden="true">≋</div><h3>多轨波形查看</h3><p>可见信号各自使用独立纵轴，共享时间轴。搜索信号、读取游标值，并缩放或平移历史波形。</p></article>
-          <article class="feature"><span class="feature-index">04</span><div class="feature-icon" aria-hidden="true">◇</div><h3>项目与信号组</h3><p>项目保存 DBC 路径及当前信号选择。常用选择可保存为全局信号组，在其他项目中替换或追加。</p></article>
+        <div class="section-head"><div><p class="kicker">核心痛点 / 01</p><h2>把时间花在分析上</h2></div><p>围绕记录对比、多段回放和录制期间的历史回看，减少分析过程中的切换。</p></div>
+        <div class="feature-grid pain-grid">
+<article class="feature"><span class="feature-index">01 / 多窗口对比</span><div class="feature-icon" aria-hidden="true">▤</div><h3>一次只能分析一个 BLF，难以对比多份记录。</h3><p class="pain-context">排查偶发问题或比较不同工况时，需要反复切换文件，难以同时观察同一信号的变化。</p><p class="solution-label">在 CANFlow 中</p><p>CANFlow 支持多个独立分析窗口，可分别导入 BLF、配置 DBC 和选择信号，并排查看不同记录的波形。</p><p class="feature-note">每个窗口独立控制回放、游标与测量；顶部操作作用于当前选中的窗口。</p></article>
+<article class="feature"><span class="feature-index">02 / 多段串联回放</span><div class="feature-icon" aria-hidden="true">⌁</div><h3>传统工具无法拼接多个文件进行回放分析。</h3><p class="pain-context">一次测试产生多段记录后，逐个打开文件会打断分析过程。</p><p class="solution-label">在 CANFlow 中</p><p>CANFlow 支持在同一窗口多选 BLF，按最早采集时间排序后依次回放，便于连续查看多段数据。</p><p class="feature-note">这里的拼接是串联回放，不会生成合并后的 BLF；保留原始采集时间与文件间空白，时间范围重叠的文件需放到不同窗口分析。</p></article>
+<article class="feature"><span class="feature-index">03 / 历史记录回看</span><div class="feature-icon" aria-hidden="true">◷</div><h3>工程正在录制时，无法回看历史文件。</h3><p class="pain-context">现场测试中，当前工程持续录制，但排查问题又需要查看此前的记录，容易打断采集流程。</p><p class="solution-label">在 CANFlow 中</p><p>CANFlow 作为独立的离线分析工具，可打开已完成录制并保存的历史 BLF，供录制工具继续采集期间回看分析。</p><p class="feature-note">CANFlow 本身不负责实时录制，也不读取正在写入的文件。</p></article>
         </div>
       </div>
     </section>
 
-    <section class="section product-section">
+    <section class="section product-section" id="reuse">
       <div class="wrap product-grid">
-        <div class="product-copy"><p class="kicker">配置与查看 / 02</p><h2>配置一次，<br>把注意力留给曲线。</h2><p>先建立通道与 DBC 的映射，再导入 BLF、选择信号。回放结束后新增信号时，CANFlow 会重新读取原始记录并补画历史波形。</p><ul class="detail-list"><li><span>01</span> 项目文件引用外部 DBC，不打包原始记录</li><li><span>02</span> 信号组可单独导入与导出</li><li><span>03</span> 原始报文视图保留最近 1000 条供查看</li></ul></div>
-        <figure class="product-shot"><img src="assets/configuration.png" width="1600" height="900" loading="lazy" alt="CANFlow 文件与信号配置页，展示项目 DBC 映射及信号选择"><figcaption><span>配置视图</span><span>通道映射 / 文件 / 信号</span></figcaption></figure>
+        <div class="product-copy"><p class="kicker">信号选择复用 / 02</p><h2>项目可以换，<br>常用选择留得住。</h2><p>把经常一起分析的信号保存成组，下次切换项目时，先配置该项目的通道与 DBC，再应用已有信号组。匹配的信号直接复用，将精力集中在需要调整的差异上。</p><ul class="detail-list"><li><span>01</span> 项目保存通道与 DBC 映射及当前信号选择</li><li><span>02</span> 全局信号组支持替换、追加、导入与导出</li><li><span>03</span> 应用后提示缺失或定义冲突，便于核对差异</li></ul></div>
+        <figure class="product-shot"><img src="assets/dbc-310.png" width="760" height="520" loading="lazy" alt="CANFlow v3.1.0 当前分析窗口的 DBC 通道映射面板"><figcaption><span>配置视图</span><span>通道映射 / 文件 / 信号</span></figcaption></figure>
+      </div>
+    </section>
+
+    <section class="section updates" id="updates">
+      <div class="wrap">
+        <div class="section-head"><div><p class="kicker">V3 性能优化 · 历史测试</p><h2>大记录，更快进入分析。</h2></div><p>完整预检、原始样本与真实采集时间仍然保留。</p></div>
+        <div class="update-grid">
+          <article class="update-card"><span class="metric">60.7%</span><h3>首次 BLF 预检耗时减少</h3><p>三个约 1 GiB 合成文件：73.677 s → 28.936 s。完整扫描元数据，未变化文件在同一会话中复用预检结果。</p><a href="https://github.com/lingPoint/CANFlow/blob/main/docs/import-performance.md" target="_blank" rel="noopener noreferrer">查看导入验证</a></article>
+          <article class="update-card"><span class="metric">26.9%</span><h3>后台回放处理耗时减少</h3><p>约 1 GiB、16 通道密集解码场景：90.36 s → 66.05 s。提前准备解码器，按信号批量写入磁盘缓存，合并界面进度更新。</p><a href="https://github.com/lingPoint/CANFlow/blob/main/docs/v3-performance.md" target="_blank" rel="noopener noreferrer">查看回放验证</a></article>
+          <article class="update-card"><span class="metric">≈54×</span><h3>全范围波形查询加速</h3><p>16 条曲线全范围查询：4.033 s → 0.0745 s。两级峰值概览保留孤立尖峰；近距离缩放、游标与间隔测量读取原始点。</p><a href="https://github.com/lingPoint/CANFlow/blob/main/docs/v3-performance.md" target="_blank" rel="noopener noreferrer">查看测试条件</a></article>
+        </div>
+        <p class="benchmark-note">以上为仓库记录的 Windows 本机单次合成数据实测；导入与回放使用不同基线，不代表所有真实文件的性能保证。后台处理耗时不包含完整界面绘图。</p>
+        <div class="measurement"><div><h3>采样间隔测量</h3><p>在信号列表选中目标信号，点击顶部“测量间隔”，再依次点击波形两次。A、B 吸附真实采样点，显示时间差 Δt；悬停结果查看采集时间和值。“清除标记”可重新测量。</p></div><div><h3>显示更轻，数据完整</h3><p>所有解码样本保存在 SQLite 临时缓存，退出时清理。远距离概览用于绘图，精确时间请用真实采样标记测量。原始报文表保留最近 1000 条，完整 BLF 留在原文件。</p></div></div>
+        <p class="benchmark-note">当前边界：首次扫描随数据量增长；缓存仅限当前进程。单文件跳转及新增信号补画仍需顺序读取。曲线数量无硬限制，流畅度取决于机器与视野范围。</p>
       </div>
     </section>
 
     <section class="section workflow" id="workflow">
       <div class="wrap">
-        <div class="section-head"><div><p class="kicker">使用流程 / 03</p><h2>四步看到波形</h2></div><p>在本机运行，不需要上传 BLF 文件。</p></div>
-        <ol class="steps"><li><span>01</span><h3>配置项目</h3><p>为 CAN 通道指定 DBC，并选择要分析的信号。</p></li><li><span>02</span><h3>添加记录</h3><p>导入一个或多个 BLF，完成时间与文件预检。</p></li><li><span>03</span><h3>开始回放</h3><p>逐文件快速处理，使用时间轴、暂停与停止控制进度。</p></li><li><span>04</span><h3>查看变化</h3><p>在波形页搜索信号、查看游标数值并缩放轨道。</p></li></ol>
+        <div class="section-head"><div><p class="kicker">使用流程 / 03</p><h2>选定窗口，开始分析</h2></div><p>在本机完成配置、复用与分析，无需上传 BLF 文件。</p></div>
+        <ol class="steps"><li><span>01</span><h3>选定分析窗口</h3><p>默认打开两个独立窗口，可按需新增。点击目标窗口，蓝色边框表示顶部操作的作用对象。</p></li><li><span>02</span><h3>导入 BLF 与配置 DBC</h3><p>为当前窗口导入一个或多个已保存的 BLF，配置通道对应的 DBC，并选择信号或应用信号组。</p></li><li><span>03</span><h3>独立开始回放</h3><p>顶部开始、暂停与停止仅作用于当前窗口。同窗多文件按最早采集时间排序，重叠记录放入不同窗口。</p></li><li><span>04</span><h3>对照波形与测量</h3><p>查看不同窗口中同一信号的变化，读取游标值并测量采样间隔。各窗口保留独立的视野与标记。</p></li></ol>
       </div>
     </section>
 
-    <section class="section final-section" id="start"><div class="wrap final-grid"><div><p class="kicker">开始使用 / 04</p><h2>在本机打开 CANFlow</h2><p>项目目前通过源码运行。安装 Python 3.10 或更新版本后，在项目目录执行：</p><div class="code-block"><code>python -m venv .venv<br>.venv\Scripts\python.exe -m pip install -r requirements.txt<br>.venv\Scripts\python.exe run.py</code></div><a class="button primary" href="https://github.com/lingPoint/CANFlow" target="_blank" rel="noopener noreferrer">前往 GitHub 获取源码 <span aria-hidden="true">↗</span></a><p class="license-note">源码按 PolyForm Noncommercial License 1.0.0 授权，仅限许可证规定的非商业用途；商业使用需另获许可。</p></div><figure class="small-shot"><img src="assets/dense-signals.png" width="1600" height="900" loading="lazy" alt="CANFlow 40 个信号的游标列表与多轨波形示例"><figcaption>信号密集场景的游标查看 · 示例数据</figcaption></figure></div></section>
+    <section class="section final-section" id="start"><div class="wrap final-grid"><div><p class="kicker">开始使用 / 04</p><h2>在本机打开 CANFlow</h2><p>前往 GitHub Releases 查看可用 Windows 构建及版本说明，选择与所需功能对应的版本。Windows EXE 无需安装 Python；不包含 BLF 或 DBC，请选择本地文件。</p><div class="hero-actions"><a class="button primary" href="https://github.com/lingPoint/CANFlow/releases">查看 Windows 下载</a><a class="button text-button" href="https://github.com/lingPoint/CANFlow/releases" target="_blank" rel="noopener noreferrer">查看所有构建</a></div><p>也可通过源码运行：安装 Python 3.10+ 后，在项目目录执行：</p><div class="code-block"><code>python -m venv .venv<br>.venv\Scripts\python.exe -m pip install -r requirements.txt<br>.venv\Scripts\python.exe run.py</code></div><a class="button primary" href="https://github.com/lingPoint/CANFlow" target="_blank" rel="noopener noreferrer">前往 GitHub 获取源码</a><p class="license-note">源码公开，按 PolyForm Noncommercial License 1.0.0 授权，仅限许可证规定的非商业用途；商业使用需另获许可。此许可证不是 OSI 开源许可证。</p></div><figure class="small-shot"><img src="assets/signals-310.png" width="800" height="650" loading="lazy" alt="CANFlow v3.1.0 当前分析窗口的信号选择面板"><figcaption>信号选择与窗口波形 · 示例数据</figcaption></figure></div></section>
   </main>
-  <footer><div class="wrap footer-inner"><span>CAN<span>Flow</span></span><span>BLF 波形回放工具</span><a href="https://github.com/lingPoint/CANFlow" target="_blank" rel="noopener noreferrer">GitHub ↗</a></div></footer>
+  <footer><div class="wrap footer-inner"><span>CAN<span>Flow</span></span><span>多窗口对照 · 多段串联 · 离线回看</span><a href="https://github.com/lingPoint/CANFlow" target="_blank" rel="noopener noreferrer">GitHub</a></div></footer>
 </body>
 </html>
