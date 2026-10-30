@@ -371,7 +371,7 @@ class CompareDialog(QtWidgets.QDialog):
 
     def clear_results(self):
         self.refresh_timer.stop()
-        for _, right, _, _ in self.plots:
+        for _, right, _, _, _ in self.plots:
             if right is not None:
                 self.graphics.scene().removeItem(right)
         self.graphics.clear()
@@ -396,6 +396,10 @@ class CompareDialog(QtWidgets.QDialog):
             plot.setLabel('left', f'A [{units[0]}]', color='#38bdf8')
             plot.setTitle(f'A: {pair[0].label()} [{units[0]}]    |    B: {pair[1].label()} [{units[1]}]' + ('   ⚠ 单位不同' if units[0] != units[1] else ''))
             a = plot.plot(pen=pg.mkPen('#38bdf8', width=2), name='A')
+            a_samples = pg.ScatterPlotItem(
+                [], [], symbol='o', size=5, pen=None, brush=pg.mkBrush('#38bdf8')
+            )
+            plot.addItem(a_samples)
             right = None
             if units[0] != units[1]:
                 plot.showAxis('right')
@@ -407,6 +411,10 @@ class CompareDialog(QtWidgets.QDialog):
                 right.setXLink(plot.vb)
                 b = pg.PlotDataItem(pen=pg.mkPen('#fb7185', width=2), name='B')
                 right.addItem(b)
+                b_samples = pg.ScatterPlotItem(
+                    [], [], symbol='o', size=5, pen=None, brush=pg.mkBrush('#fb7185')
+                )
+                right.addItem(b_samples)
                 plot.legend.addItem(b, 'B')
                 def sync(*_args, plot=plot, right=right):
                     right.setGeometry(plot.vb.sceneBoundingRect())
@@ -415,6 +423,10 @@ class CompareDialog(QtWidgets.QDialog):
                 sync()
             else:
                 b = plot.plot(pen=pg.mkPen('#fb7185', width=2), name='B')
+                b_samples = pg.ScatterPlotItem(
+                    [], [], symbol='o', size=5, pen=None, brush=pg.mkBrush('#fb7185')
+                )
+                plot.addItem(b_samples)
             line = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen('#ffffff'))
             line.hide()
             plot.addItem(line, ignoreBounds=True)
@@ -424,34 +436,40 @@ class CompareDialog(QtWidgets.QDialog):
             else:
                 plot.setXLink(master)
             plot.vb.sigXRangeChanged.connect(lambda *_: self.refresh_timer.start())
-            self.plots.append((plot, right, (a, b), line))
+            self.plots.append((plot, right, (a, b), line, (a_samples, b_samples)))
         self.refresh()
 
     def refresh(self):
         if not self.sides_snapshot or not self.connections:
             return
-        for pair, (plot, right, curves, _) in zip(self.pairs, self.plots):
+        for pair, (plot, right, curves, _, sample_markers) in zip(self.pairs, self.plots):
             low, high = plot.vb.viewRange()[0]
             for i, (key, curve) in enumerate(zip(pair, curves)):
                 side = self.sides_snapshot[i]
                 start = max(side['start'], side['start'] + low)
                 end = min(side['end'], side['start'] + high)
-                x, y, _, _ = plot_points_with_samples(self.connections[i], key.storage_key(), start, end)
+                x, y, sample_x, sample_y = plot_points_with_samples(
+                    self.connections[i], key.storage_key(), start, end
+                )
                 curve.setData([v - side['start'] for v in x], y)
+                sample_markers[i].setData(
+                    [v - side['start'] for v in sample_x], sample_y
+                )
             if right:
                 right.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
 
     def mouse_moved(self, position):
         if not self.sides_snapshot or not self.plots:
             return
-        source = next((p for p, _, _, _ in self.plots if p.vb.sceneBoundingRect().contains(position)), None)
+        source = next((p for p, _, _, _, _ in self.plots
+                       if p.vb.sceneBoundingRect().contains(position)), None)
         if source is None:
             return
         x = float(source.vb.mapSceneToView(position).x())
         low, high = source.vb.viewRange()[0]
         tolerance = max((high - low) * .05, .001)
         lines = []
-        for pair, (_, _, _, line) in zip(self.pairs, self.plots):
+        for pair, (_, _, _, line, _) in zip(self.pairs, self.plots):
             line.setValue(x)
             line.show()
             values = []
