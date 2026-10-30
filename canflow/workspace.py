@@ -57,7 +57,6 @@ class MainWindow(QtWidgets.QMainWindow):
         self.project_button.setMenu(self.project_menu)
         bar.addWidget(self.project_button)
         bar.addWidget(button("保存项目", lambda: self._project_command("_save_project")))
-        bar.addWidget(button("双文件对比", self.open_compare))
         bar.addSeparator()
         bar.addWidget(QtWidgets.QLabel("操作对象"))
         self.window_selector = QtWidgets.QComboBox()
