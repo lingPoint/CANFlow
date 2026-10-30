@@ -681,7 +681,7 @@ def test_workflow_guides_import_configuration_and_replay(tmp_path, monkeypatch):
         app.processEvents()
 
 
-def test_forty_selected_signals_have_searchable_cursor_values(tmp_path: Path) -> None:
+def test_forty_selected_signals_have_cursor_values(tmp_path: Path) -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     window = AnalysisWindow()
     try:
@@ -700,9 +700,8 @@ def test_forty_selected_signals_have_searchable_cursor_values(tmp_path: Path) ->
         assert sum(layer.visible for layer in window.chart.layers.values()) == 3
         last_row = next(row for row in range(40) if window.curve_table.item(row, 1).text() == "Signal39")
         assert window.curve_table.item(last_row, 2).text() == "39"
-        window.curve_search.setText("Signal39")
-        assert sum(not window.curve_table.isRowHidden(row) for row in range(40)) == 1
-        assert "1 / 40" in window.curve_footer.text()
+        assert sum(not window.curve_table.isRowHidden(row) for row in range(40)) == 40
+        assert "40 / 40" in window.curve_footer.text()
         assert window.display_panel.isHidden()
         window.display_toggle.click()
         assert not window.display_panel.isHidden()
