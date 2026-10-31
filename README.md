@@ -1,10 +1,10 @@
-![CANFlow Logo](docs/images/canflow-logo.svg)
+![CANFlow Logo](img/canflow-logo.svg)
 
 # CANFlow v3.1.0
 
 CANFlow 是 Windows 桌面 CAN / CAN FD 离线分析工具。多份记录可在独立窗口中对照，多段 BLF 可在同一窗口串联回放；录制工具继续采集时，也可以回看已保存的历史文件。
 
-![CANFlow 多窗口分析](docs/design/2026-10-30/workspace-1600.png)
+![CANFlow 多窗口分析](img/workspace-1600.png)
 
 
 [访问网站](https://canflow.zerox.cc/) · [下载 Windows 版本](https://github.com/lingPoint/CANFlow/releases)
