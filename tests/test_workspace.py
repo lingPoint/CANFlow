@@ -249,3 +249,56 @@ def test_failed_replay_remains_failed_and_other_window_stays_ready(workspace, tm
     assert "回放失败" in first.statusBar().currentMessage()
     assert second.replay_badge.text() == "等待导入"
     assert first.start_button.isEnabled()
+
+
+def test_analysis_window_heights_can_be_resized_with_one_or_two_windows(workspace):
+    app, window = workspace
+    window.resize(1384, 704)
+    window.show()
+    app.processEvents()
+    assert window.canvas.count() == 3  # Two sessions and the bottom spacer.
+    window.canvas.setSizes([400, 200, 100])
+    app.processEvents()
+    assert window.canvas.sizes()[0] > window.canvas.sizes()[1]
+    assert window.close_active_window()
+    app.processEvents()
+    window.canvas.setSizes([250, 350])
+    app.processEvents()
+    smaller = window.canvas.sizes()[0]
+    window.canvas.setSizes([450, 150])
+    app.processEvents()
+    assert window.canvas.sizes()[0] > smaller
+
+
+def test_windows_fill_workspace_by_default_when_count_changes(workspace):
+    app, window = workspace
+    window.resize(1500, 1000)
+    app.processEvents()
+    assert window.canvas.sizes()[-1] == 0
+    assert all(size > 0 for size in window.canvas.sizes()[:-1])
+    window.add_analysis_window()
+    app.processEvents()
+    assert window.canvas.sizes()[-1] == 0
+    assert window.close_active_window()
+    app.processEvents()
+    assert window.canvas.sizes()[-1] == 0
+
+
+def test_adding_third_window_preserves_existing_heights_and_scrolls(workspace):
+    app, window = workspace
+    window.resize(1500, 1000)
+    app.processEvents()
+    before = window.canvas.sizes()[:2]
+    third = window.add_analysis_window()
+    app.processEvents()
+    after = window.canvas.sizes()[:3]
+    assert all(abs(old - new) <= 2 for old, new in zip(before, after))
+    assert after[2] >= min(before) - 2
+    assert window.scroll.verticalScrollBar().maximum() > 0
+    assert window.scroll.verticalScrollBar().value() > 0
+    top = third.mapTo(window.scroll.viewport(), QtCore.QPoint()).y()
+    assert top >= 0
+    assert top + third.height() <= window.scroll.viewport().height()
+    assert window.close_active_window()
+    app.processEvents()
+    assert window.scroll.verticalScrollBar().maximum() == 0

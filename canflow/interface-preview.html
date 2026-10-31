@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CANFlow v3.1.0 · 界面原型</title>
+<style>
+/* 界面配色与尺寸集中在这里，便于调整 */
+:root { --bg:#edf0f2; --panel:#fff; --line:#cbd6de; --soft:#f5f8fa; --text:#283d4c; --muted:#667e8e; --blue:#3984ad; --blue-soft:#eaf3f8; --green:#e4f1ed; }
+* { box-sizing:border-box; }
+body { margin:0; color:var(--text); background:var(--bg); font:13px "Microsoft YaHei UI", "Microsoft YaHei", sans-serif; }
+button,select,input { font:inherit; color:inherit; }
+button,select { min-height:32px; padding:5px 10px; background:#fff; border:1px solid #c4cfd8; border-radius:4px; cursor:pointer; }
+button:hover { background:#edf6fb; border-color:#6c9fbc; }
+button:disabled { color:#9aa8b2; background:#f4f6f8; cursor:default; }
+button.primary { background:#397fa5; color:#fff; border-color:#397fa5; }
+button.primary:disabled { background:#dfe6eb; border-color:#dfe6eb; color:#899ba7; }
+.toolbar { display:flex; align-items:center; flex-wrap:wrap; gap:5px; padding:5px; background:white; border-bottom:1px solid #d1dbe2; }
+.brand { font-size:17px; font-weight:700; padding:0 12px 0 7px; }
+.divider { width:1px; height:25px; background:#d8e0e5; margin:0 4px; }
+.spacer { flex:1; }.muted { color:var(--muted); }.selector { min-width:175px; }
+.notice { background:var(--blue-soft); color:#52758a; padding:6px 14px; }
+.workspace { display:flex; flex-direction:column; gap:0; padding:0 0 30px; }
+.card { background:white; border:1px solid #c5cfd6; min-height:160px; height:calc((100vh - 170px)/2); display:flex; flex-direction:column; margin:0; }
+.resize-handle { height:4px; flex:none; cursor:row-resize; background:#d8e1e7; touch-action:none; }
+.resize-handle:hover { background:#3984ad; }
+.card.active { border:2px solid var(--blue); }
+.card-header { display:flex; align-items:center; gap:12px; padding:3px 10px; background:var(--soft); border-bottom:1px solid #d8e0e5; white-space:nowrap; }
+.card-header button { min-height:26px; padding:2px 8px; }
+.card-title { color:#245e80; font-weight:600; }.badge { background:var(--green); color:#28684f; padding:3px 8px; border-radius:3px; }
+.card-body { display:flex; flex:1; min-height:0; }.sidebar { width:310px; min-width:230px; display:flex; flex-direction:column; padding:8px 8px 6px; border-right:4px solid #e3e9ed; resize:horizontal; overflow:auto; }
+.table-head { display:grid; grid-template-columns:44px 1fr 95px; background:#f3f6f8; color:#637a89; padding:6px; border-bottom:1px solid #dce4e9; }
+.sidebar-empty { flex:1; }.footer { color:var(--muted); padding-top:5px; }
+.plot-area { flex:1; min-width:0; padding:6px 8px 4px; display:flex; flex-direction:column; }.readouts { display:flex; justify-content:space-between; color:var(--muted); padding-bottom:4px; }
+.plot { position:relative; flex:1; min-height:100px; overflow:hidden; background:#fff; }
+.plot:before { content:""; position:absolute; inset:5px 5px 25px 37px; background-image:linear-gradient(to right,#e8eef1 1px,transparent 1px),linear-gradient(to bottom,#e8eef1 1px,transparent 1px); background-size:10% 25%; border-left:1px solid #aab9c1; border-bottom:1px solid #aab9c1; }
+.axis-label { position:absolute; bottom:3px; left:50%; color:#71828c; font-size:11px; transform:translateX(-50%); }
+.axis-zero { position:absolute; left:33px; bottom:9px; color:#71828c; font-size:10px; }
+.status { position:fixed; bottom:0; width:100%; padding:5px 12px; background:#f5f8fa; color:#617887; border-top:1px solid #dce4e9; }
+.dialog { width:min(760px,calc(100vw - 30px)); max-height:85vh; border:1px solid #cbd6de; padding:0; color:var(--text); box-shadow:0 12px 40px #1a344b30; }
+.dialog::backdrop { background:#263b4a33; }.dialog-head { display:flex; align-items:center; padding:10px 16px; background:var(--soft); border-bottom:1px solid var(--line); font-weight:600; }.dialog-head button { margin-left:auto; min-height:26px; padding:0 8px; }.dialog-content { padding:16px; display:flex; flex-direction:column; gap:10px; }.dialog-content p { margin:0; }.dialog-content input[type=search] { padding:8px; border:1px solid var(--line); border-radius:3px; }.dialog-table { min-height:240px; border:1px solid #e2e8ec; }.dialog-table .table-head { display:block; }.row { display:flex; flex-wrap:wrap; align-items:center; gap:7px; }.row select { min-width:170px; }.settings-grid { display:grid; grid-template-columns:140px 1fr; gap:12px; align-items:center; }.settings-grid input[type=number] { width:90px; padding:7px; border:1px solid var(--line); }
+@media(max-width:800px) { .sidebar { width:235px; min-width:150px; }.table-head { grid-template-columns:38px 1fr 65px; }.card-header { gap:6px; }.toolbar .spacer { display:none; } }
+</style>
+</head>
+<body>
+<header class="toolbar">
+  <button id="addWindow">＋ 新增窗口</button><button id="closeWindow">关闭窗口</button><span class="divider"></span>
+  <button data-dialog="project">项目 ▾</button><button data-dialog="project">保存项目</button><span class="divider"></span>
+  <button data-dialog="display">显示设置</button><button data-dialog="details">原始报文</button><span class="divider"></span><button data-dialog="files">导入 BLF</button><button data-dialog="files">文件管理</button><button data-dialog="mapping">配置 DBC</button><button data-dialog="signals">添加信号</button><span class="divider"></span>
+  <button class="primary" disabled>开始回放</button><button disabled>暂停</button><button disabled>停止</button><span class="spacer"></span><span id="windowCount" class="muted"></span>
+</header>
+
+<main class="workspace" id="workspace"></main>
+<footer class="status" id="status"></footer>
+<dialog class="dialog" id="dialog"><div class="dialog-head"><span id="dialogTitle"></span><button id="closeDialog" aria-label="关闭">×</button></div><div class="dialog-content" id="dialogContent"></div></dialog>
+<template id="cardTemplate"><section class="card" tabindex="0"><div class="card-header"><span class="card-title"></span><span class="badge">等待导入</span><span>未导入 BLF</span><span>DBC：未配置</span><span class="spacer"></span><button class="fit-horizontal">水平适配</button><button class="fit-vertical">垂直适配</button><button class="measure" aria-pressed="false">测量间隔</button><button class="clear">清除标记</button></div><div class="card-body"><aside class="sidebar"><div class="table-head"><span>显示</span><span>名称</span><span>游标值</span></div><div class="sidebar-empty"></div><div class="footer">暂无信号，请从顶部添加信号</div></aside><div class="plot-area"><div class="readouts"><span>0 条已选 · 0 条显示</span><span>游标　—</span></div><div class="plot"><span class="axis-zero">0</span><span class="axis-label">相对首帧时间 (s)</span></div></div></div></section></template>
+<script>
+// 此文件是界面原型：窗口和弹窗可交互，BLF / DBC 数据处理仍由桌面程序完成。
+const workspace = document.querySelector('#workspace');
+const dialog = document.querySelector('#dialog');
+let ids = [1, 2], active = 1, nextId = 3;
+const measurement = new Map();
+const heights = new Map();
+function render() {
+  workspace.replaceChildren();
+  for (const id of ids) {
+    const card = document.querySelector('#cardTemplate').content.firstElementChild.cloneNode(true);
+    card.classList.toggle('active', id === active);
+    const measureButton = card.querySelector('.measure');
+    const measured = measurement.get(id) || false;
+    measureButton.setAttribute('aria-pressed', String(measured));
+    measureButton.style.background = measured ? '#dceefa' : '';
+    measureButton.addEventListener('click', () => { measurement.set(id, !measurement.get(id)); active = id; render(); });
+    card.querySelector('.card-title').textContent = `数据分析窗口 ${id}${id === active ? ' · 当前' : ''}`;
+    card.addEventListener('click', () => { if (active !== id) { active = id; render(); } });
+    card.addEventListener('focus', () => { if (active !== id) { active = id; render(); } });
+    if (heights.has(id)) card.style.height = `${heights.get(id)}px`;
+    workspace.append(card);
+    {
+      const handle = document.createElement('div');
+      handle.className = 'resize-handle';
+      handle.title = '拖动调整窗口高度';
+      handle.addEventListener('pointerdown', event => {
+        event.preventDefault();
+        const next = handle.nextElementSibling;
+        const startY = event.clientY, firstHeight = card.offsetHeight, nextHeight = next ? next.offsetHeight : 0;
+        handle.setPointerCapture(event.pointerId);
+        handle.onpointermove = move => {
+          const delta = Math.max(160 - firstHeight, next ? Math.min(nextHeight - 160, move.clientY - startY) : move.clientY - startY);
+          card.style.height = `${firstHeight + delta}px`;
+          if (next) next.style.height = `${nextHeight - delta}px`;
+          heights.set(id, firstHeight + delta);
+          if (next) heights.set(ids[ids.indexOf(id) + 1], nextHeight - delta);
+        };
+        handle.onpointerup = () => { handle.onpointermove = null; };
+      });
+      workspace.append(handle);
+    }
+  }
+  document.querySelector('#windowCount').textContent = `${ids.length} 个分析窗口`;
+  document.querySelector('#closeWindow').disabled = ids.length <= 1;
+  document.querySelector('#status').textContent = `窗口 ${active}：从顶部导入 BLF，配置 DBC 并添加信号`;
+}
+document.querySelector('#addWindow').addEventListener('click', () => { active = nextId++; ids.push(active); render(); });
+document.querySelector('#closeWindow').addEventListener('click', () => { if (ids.length > 1) { ids = ids.filter(id => id !== active); active = ids[0]; render(); } });
+const dialogs = {
+  project: ['项目', '<p>新建当前窗口项目　　打开项目…　　保存项目　　项目另存为…</p><p class="muted">界面演示：项目读写需在桌面程序中操作。</p>'],
+  files: ['记录文件', '<div class="row"><button>导入 BLF</button><button>清空记录</button></div><p>按首帧采集时间排序，逐个文件回放。导入失败或取消会保留原列表。</p><div class="dialog-table"><div class="table-head">文件　　　　　　　　　　　　　首帧时间　　　　　　　　　帧数</div></div><p class="muted">已载入 0 个文件</p>'],
+  mapping: ['配置 DBC', '<p>为当前分析窗口的 CAN 通道指定 DBC；未配置的通道仍可查看原始报文。</p><div class="dialog-table"><div class="table-head">通道　　　　　　　　　DBC</div></div><div class="row"><button>新增通道</button><button>指定 DBC</button><button>删除映射</button><button>最近 DBC ▾</button></div>'],
+  signals: ['添加信号', '<p>勾选自动生效；回放中新增信号将在处理结束后自动补画。</p><input type="search" placeholder="搜索信号 / 报文 ID"><span>0 个已选</span><div class="dialog-table"></div><p>当前未选择信号</p><div class="row"><select><option>选择信号组</option></select><button>替换</button><button>追加</button></div><div class="row"><button>保存为信号组</button><button>删除组</button><button>导入组</button><button>导出组</button></div>'],
+  display: ['显示与回放设置', '<div class="settings-grid"><label for="timeMode">时间轴</label><select id="timeMode"><option>相对时间</option><option>原始采集时间</option></select><label for="emphasis">采样点粗细</label><input id="emphasis" type="number" value="2.5" min="0.5" max="8" step="0.5"><button>自动适配 Y</button><label><input type="checkbox"> 锁定全部 Y 轴</label><label><input type="checkbox" checked> 显示网格</label><select><option>浅色</option><option>深色</option></select><label><input type="checkbox" checked> 跟随播放</label><label><input type="number" value="60"> 秒</label></div><p class="muted">Ctrl + 滚轮：同步缩放各轨道纵轴<br>显示设置会记住，已打开窗口的当前视图互不影响。</p>'],
+  details: ['原始报文与进度', '<p>最近 1000 条 CAN / CAN FD 报文；完整记录保留在原始 BLF 文件中。</p><div class="dialog-table"><div class="table-head">时间　　　　　　　通道　　　　　ID　　　　　类型　　　　　数据</div></div><p>—</p><input type="range" value="0">']
+};
+document.querySelectorAll('[data-dialog]').forEach(button => button.addEventListener('click', () => { const [title, content] = dialogs[button.dataset.dialog]; document.querySelector('#dialogTitle').textContent = `分析窗口 ${active} · ${title}`; document.querySelector('#dialogContent').innerHTML = content; dialog.showModal(); }));
+document.querySelector('#closeDialog').addEventListener('click', () => dialog.close());
+render();
+</script>
+</body>
+</html>

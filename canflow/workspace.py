@@ -29,10 +29,6 @@ class MainWindow(QtWidgets.QMainWindow):
         bar = QtWidgets.QToolBar("工作区", self)
         bar.setMovable(False)
         self.addToolBar(bar)
-        brand = QtWidgets.QLabel(f"CANFlow v{__version__}")
-        brand.setObjectName("brand")
-        brand.setContentsMargins(7, 0, 12, 0)
-        bar.addWidget(brand)
         self.new_window_button = button("＋ 新增窗口", self.add_analysis_window)
         bar.addWidget(self.new_window_button)
         self.close_window_button = button("关闭窗口", self.close_active_window)
@@ -58,11 +54,13 @@ class MainWindow(QtWidgets.QMainWindow):
         bar.addWidget(self.project_button)
         bar.addWidget(button("保存项目", lambda: self._project_command("_save_project")))
         bar.addSeparator()
-        bar.addWidget(QtWidgets.QLabel("操作对象"))
-        self.window_selector = QtWidgets.QComboBox()
+        self.window_selector = QtWidgets.QComboBox(self)
         self.window_selector.setMinimumWidth(175)
         self.window_selector.currentIndexChanged.connect(self._select_index)
-        bar.addWidget(self.window_selector)
+        self.window_selector.hide()
+        self.command_stack = QtWidgets.QStackedWidget()
+        self.command_stack.setSizePolicy(QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed)
+        bar.addWidget(self.command_stack)
         spacer = QtWidgets.QWidget()
         spacer.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Preferred)
         bar.addWidget(spacer)
@@ -73,20 +71,16 @@ class MainWindow(QtWidgets.QMainWindow):
         layout = QtWidgets.QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        self.command_stack = QtWidgets.QStackedWidget()
-        self.command_stack.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Fixed)
-        layout.addWidget(self.command_stack)
-        self.notice = QtWidgets.QLabel("点击任一分析窗口，将顶部操作切换到该窗口。")
-        self.notice.setContentsMargins(14, 5, 14, 5)
-        self.notice.setStyleSheet("background: #eaf3f8; color: #52758a;")
-        layout.addWidget(self.notice)
         self.scroll = QtWidgets.QScrollArea()
         self.scroll.setWidgetResizable(True)
         self.scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.canvas = QtWidgets.QWidget()
-        self.canvas_layout = QtWidgets.QVBoxLayout(self.canvas)
-        self.canvas_layout.setContentsMargins(10, 10, 10, 10)
-        self.canvas_layout.setSpacing(10)
+        self.canvas = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        self.canvas.setChildrenCollapsible(False)
+        self.canvas.setHandleWidth(4)
+        self.canvas_spacer = QtWidgets.QWidget()
+        self.canvas_spacer.setMinimumHeight(0)
+        self.canvas.addWidget(self.canvas_spacer)
+        self.canvas.setCollapsible(0, True)
         self.scroll.setWidget(self.canvas)
         layout.addWidget(self.scroll, 1)
         for sequence, callback in (("Ctrl+Shift+N", self.add_analysis_window),
@@ -99,14 +93,27 @@ class MainWindow(QtWidgets.QMainWindow):
     def add_analysis_window(self):
         from .app import AnalysisWindow
 
+        previous_sizes = self.canvas.sizes()[:-1]
+        preserve_heights = self.isVisible() and bool(previous_sizes)
         session = AnalysisWindow(self._next_id)
         self._next_id += 1
         session.project_active = True
         session.setWindowFlags(QtCore.Qt.WindowType.Widget)
-        session.setMinimumHeight(300)
+        session.setMinimumHeight(160)
         session.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding, QtWidgets.QSizePolicy.Policy.Expanding)
         self.sessions.append(session)
-        self.canvas_layout.addWidget(session, 1)
+        index = self.canvas.count() - 1
+        self.canvas.insertWidget(index, session)
+        self.canvas.setCollapsible(index, False)
+        self.canvas.setStretchFactor(index, 1)
+        self.canvas.setStretchFactor(self.canvas.count() - 1, 1)
+        if preserve_heights:
+            new_height = max(session.minimumHeight(), sum(previous_sizes) // len(previous_sizes))
+            heights = previous_sizes + [new_height]
+            self.canvas.setMinimumHeight(sum(heights) + self.canvas.handleWidth() * len(heights))
+            self.canvas.setSizes(heights + [0])
+        else:
+            self.canvas.setSizes([1] * len(self.sessions) + [0])
         session.removeToolBar(session.commands)
         self.command_stack.addWidget(session.commands)
         session.state_changed.connect(lambda: self._session_changed(session))
@@ -117,7 +124,19 @@ class MainWindow(QtWidgets.QMainWindow):
         session.show()
         self.activate_session(session)
         self._update_workspace()
+        if preserve_heights:
+            # Wait for the scroll area's range to reflect the new layout.
+            QtCore.QTimer.singleShot(0, lambda: self._reveal_new_session(session))
         return session
+
+    def _reveal_new_session(self, session):
+        if self._closing or session not in self.sessions or session is not self.active_session:
+            return
+        if session.height() > self.scroll.viewport().height():
+            # For a tall window, keep its title and controls in view.
+            self.scroll.verticalScrollBar().setValue(session.y())
+        else:
+            self.scroll.ensureWidgetVisible(session, 0, 0)
 
     def _update_workspace(self):
         self.window_count.setText(f"{len(self.sessions)} 个分析窗口  ")
@@ -160,9 +179,6 @@ class MainWindow(QtWidgets.QMainWindow):
         marker = " *" if session.project_dirty else ""
         self.window_selector.setItemText(index, f"分析窗口 {session.session_id}{marker}")
         if session is self.active_session:
-            self.notice.setText(f"当前操作：分析窗口 {session.session_id}  ·  "
-                                f"{len(session.files)} 个 BLF  ·  {len(session.mapping)} 个 DBC 通道  ·  "
-                                f"{len(session.selected)} 个已选信号  |  点击其他窗口可切换")
             self.project_button.setToolTip(session.windowTitle())
 
     def _status_changed(self, session, text):
@@ -215,13 +231,17 @@ class MainWindow(QtWidgets.QMainWindow):
         if not session._maybe_save_project():
             return False
         index = self.sessions.index(session)
+        sizes = self.canvas.sizes()[:-1]
+        del sizes[index]
+        self.canvas.setMinimumHeight(sum(sizes) + self.canvas.handleWidth() * len(sizes))
         session.shutdown()
         self.sessions.remove(session)
-        self.canvas_layout.removeWidget(session)
         self.command_stack.removeWidget(session.commands)
         session.commands.deleteLater()
         session.hide()
+        session.setParent(None)
         session.deleteLater()
+        self.canvas.setSizes(sizes + [0])
         self.window_selector.blockSignals(True)
         self.window_selector.removeItem(index)
         self.window_selector.blockSignals(False)

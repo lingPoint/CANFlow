@@ -526,7 +526,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.chart.reset_auto_scale()
         self._refresh_plot(all_visible=True)
 
-    def _fit_xy(self) -> None:
+    def _fit_x(self) -> None:
         if not self.files:
             return
         first, last = self.files[0].first, self.files[-1].last
@@ -534,9 +534,13 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         padding = max(span * 0.03, 0.5 if span == 0 else 0.05)
         origin = self.files[0].first
         self.plot.setXRange(max(0, first - origin - padding), last - origin + padding, padding=0)
-        self.lock_y.setChecked(False)
-        self.chart.reset_auto_scale()
         self._refresh_plot(all_visible=True)
+
+    def _fit_xy(self) -> None:
+        if not self.files:
+            return
+        self._fit_x()
+        self._reset_auto_y()
 
     def _set_time_mode(self, _index: int) -> None:
         mode = self.time_mode_combo.currentData()

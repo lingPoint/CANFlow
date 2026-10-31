@@ -191,7 +191,9 @@ class MultiSignalChart(QtWidgets.QWidget):
         self.widget.getPlotItem().hideButtons()
         layout = QtWidgets.QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.axis_panel = TrackAxisPanel(self)
+        self.axis_panel.hide()
         layout.addWidget(self.axis_panel)
         layout.addWidget(self.widget, 1)
         self.cursor = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("#94a3b8", width=1))
@@ -397,6 +399,7 @@ class MultiSignalChart(QtWidgets.QWidget):
     def _sync_geometry(self) -> None:
         rect = self.master_view.sceneBoundingRect()
         visible_layers = [layer for layer in self.layers.values() if layer.visible]
+        self.axis_panel.setVisible(bool(visible_layers))
         if not visible_layers:
             self.axis_panel.update()
             return

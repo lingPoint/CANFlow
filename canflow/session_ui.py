@@ -92,7 +92,7 @@ def build_session_ui(s, delegate):
     s.session_header = QtWidgets.QWidget()
     s.session_header.setObjectName("sessionHeader")
     header = QtWidgets.QHBoxLayout(s.session_header)
-    header.setContentsMargins(10, 6, 10, 6)
+    header.setContentsMargins(10, 3, 10, 3)
     s.title_label = QtWidgets.QLabel(f"数据分析窗口 {s.session_id}")
     s.title_label.setObjectName("sessionTitle")
     header.addWidget(s.title_label)
@@ -110,7 +110,16 @@ def build_session_ui(s, delegate):
     s.project_label.setMaximumWidth(240)
     s.project_label.setSizePolicy(QtWidgets.QSizePolicy.Policy.Ignored, QtWidgets.QSizePolicy.Policy.Preferred)
     s.project_label.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter)
-    header.addWidget(s.project_label)
+    s.project_label.hide()
+    s.fit_button = button("水平适配", s._fit_x)
+    s.fit_y_button = button("垂直适配", s._reset_auto_y)
+    s.measure_toggle = button("测量间隔", lambda: None)
+    s.measure_toggle.setCheckable(True)
+    s.measure_toggle.toggled.connect(s._set_measurement_enabled)
+    for control in (s.fit_button, s.fit_y_button, s.measure_toggle,
+                    button("清除标记", s._clear_measurement)):
+        control.setStyleSheet("min-height: 20px; padding: 2px 8px;")
+        header.addWidget(control)
     card_layout.addWidget(s.session_header)
     s.wave_splitter = QtWidgets.QSplitter(QtCore.Qt.Orientation.Horizontal)
     s.wave_splitter.setChildrenCollapsible(False)
@@ -331,17 +340,10 @@ def build_toolbar(s):
     s.stop_button.setToolTip("停止当前窗口的预检、DBC 导入或回放")
     for widget in (s.start_button, s.pause_button, s.stop_button):
         s.commands.addWidget(widget)
-    s.commands.addSeparator()
-    s.fit_button = button("自动适配", s._fit_xy)
-    s.measure_toggle = button("测量间隔", lambda: None)
-    s.measure_toggle.setCheckable(True)
-    s.measure_toggle.toggled.connect(s._set_measurement_enabled)
-    s.measure_toggle.setToolTip("选择左侧信号后，在波形上依次点击两个真实采样点")
-    for widget in (s.fit_button, s.measure_toggle, button("清除标记", s._clear_measurement)):
-        s.commands.addWidget(widget)
-    s.commands.addSeparator()
     s.display_toggle = button("显示设置", lambda: s.show_editor("display"))
     s.details_toggle = button("原始报文", lambda: s.show_editor("details"))
-    s.commands.addWidget(s.display_toggle)
-    s.commands.addWidget(s.details_toggle)
+    first_action = s.commands.actions()[0]
+    s.commands.insertWidget(first_action, s.display_toggle)
+    s.commands.insertWidget(first_action, s.details_toggle)
+    s.commands.insertSeparator(first_action)
     s.addToolBar(s.commands)  # Also usable as a standalone session for diagnostics.

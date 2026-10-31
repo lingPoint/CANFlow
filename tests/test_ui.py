@@ -236,6 +236,30 @@ def test_failed_replay_does_not_start_backfill(tmp_path: Path) -> None:
         app.processEvents()
 
 
+def test_chart_axis_space_follows_visible_signals() -> None:
+    app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
+    chart = MultiSignalChart()
+    chart.resize(900, 500)
+    chart.show()
+    app.processEvents()
+    assert chart.axis_panel.isHidden()
+    empty_width = chart.widget.width()
+    key = SignalKey(1, 1, False, "Signal")
+    chart.add_signal(key, key.label(), "V")
+    app.processEvents()
+    assert chart.axis_panel.isVisible()
+    assert chart.widget.width() < empty_width
+    chart.set_visible(key, False)
+    app.processEvents()
+    assert chart.axis_panel.isHidden()
+    assert chart.widget.width() == empty_width
+    chart.set_visible(key, True)
+    assert chart.axis_panel.isVisible()
+    chart.remove_signal(key)
+    assert chart.axis_panel.isHidden()
+    chart.close()
+
+
 def test_chart_scales_independent_y_ranges_together() -> None:
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication([])
     chart = MultiSignalChart()
@@ -720,7 +744,7 @@ def test_display_settings_toggle_stays_visible_in_short_window() -> None:
         app.processEvents()
         assert window.height() == 700
         assert window.display_panel.isVisible()
-        assert window.commands.widgetForAction(window.commands.actions()[-2]) is window.display_toggle
+        assert window.commands.widgetForAction(window.commands.actions()[0]) is window.display_toggle
 
         window.display_panel.close()
         app.processEvents()
