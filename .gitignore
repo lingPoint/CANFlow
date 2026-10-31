@@ -6,6 +6,8 @@ __pycache__/
 .pytest_cache/
 .tmp-large-test/
 .test-data/
+/canflow/interface-preview.html
+/docs/
 project1.canflow.json
 tests/CANSystem_CAN2.blf
 tests/CAN_FD_Demo.dbc

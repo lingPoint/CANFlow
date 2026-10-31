@@ -1,3 +1,0 @@
-# Replay BLF files sequentially on their original timeline
-
-CANFlow processes selected BLF files in earliest-timestamp order, finishing one file before starting the next. This preserves the recorder's file boundaries and original timestamp gaps while avoiding ambiguous interleaving of overlapping recordings. Each file's range uses the minimum and maximum timestamps across its CAN/CAN FD frames, even if frames from different channels are not in timestamp order. A next file whose earliest timestamp is earlier than the previous file's latest timestamp blocks replay with an error; equal boundary timestamps are allowed. The plotted data advances as fast as processing allows, without waiting for elapsed capture time.
