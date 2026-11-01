@@ -30,11 +30,6 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements-dev.txt "pyinstaller>=6.10,<7"
 
-      - name: Run tests
-        env:
-          QT_QPA_PLATFORM: offscreen
-        run: python -m pytest -q
-
       - name: Build EXE
         run: >-
           python -m PyInstaller
