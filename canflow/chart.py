@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable
 
 import pyqtgraph as pg
@@ -15,6 +15,13 @@ PALETTE = (
     "#38bdf8", "#fb7185", "#a3e635", "#fbbf24", "#c084fc", "#2dd4bf",
     "#f97316", "#60a5fa", "#e879f9", "#4ade80", "#facc15", "#f472b6",
 )
+
+
+def capture_datetime(timestamp: float, source: str = "utc") -> datetime:
+    """Interpret BLF header clock as local wall time or as UTC."""
+    if source == "local":
+        return datetime.fromtimestamp(timestamp, timezone.utc).replace(tzinfo=None)
+    return datetime.fromtimestamp(timestamp)
 LIGHT_PALETTE = (
     "#1679a5", "#b94359", "#537c15", "#956b0c", "#8950b1", "#168678",
     "#b65b20", "#3176bc", "#a33daf", "#278652", "#8d7410", "#b6457a",
@@ -49,13 +56,14 @@ class CaptureTimeAxis(pg.AxisItem):
     def __init__(self):
         super().__init__(orientation="bottom")
         self.mode = "relative"
+        self.time_source = "utc"
         self.origin: float | None = None
 
     def tickStrings(self, values, scale, spacing):  # noqa: N802 - pyqtgraph API
         if self.mode != "capture" or self.origin is None:
             return super().tickStrings(values, scale, spacing)
-        moments = [datetime.fromtimestamp(self.origin + value) for value in values]
-        origin_date = datetime.fromtimestamp(self.origin).date()
+        moments = [capture_datetime(self.origin + value, self.time_source) for value in values]
+        origin_date = capture_datetime(self.origin, self.time_source).date()
         multiple_dates = bool(moments) and (
             any(moment.date() != moments[0].date() for moment in moments)
             or moments[0].date() != origin_date
@@ -65,7 +73,7 @@ class CaptureTimeAxis(pg.AxisItem):
 
     def refresh_label(self) -> None:
         if self.mode == "capture":
-            date = datetime.fromtimestamp(self.origin).strftime("%Y-%m-%d") if self.origin is not None else ""
+            date = capture_datetime(self.origin, self.time_source).strftime("%Y-%m-%d") if self.origin is not None else ""
             self.setLabel(text=f"原始采集时间（首帧 {date}）")
         else:
             self.setLabel(text="相对首帧时间", units="s")

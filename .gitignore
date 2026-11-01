@@ -11,9 +11,10 @@ __pycache__/
 project1.canflow.json
 tests/CANSystem_CAN2.blf
 tests/CAN_FD_Demo.dbc
-
+/tests/
 dist/
 !site/dist/
 !site/dist/**
 .tmp-site-update/
 site-package/canflow-v310-site.tar.gz
+*canflow.json

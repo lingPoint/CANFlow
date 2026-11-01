@@ -1,20 +1,20 @@
 from __future__ import annotations
 
 import json
+import math
 import sys
 import tempfile
 import time
-from datetime import datetime
 from pathlib import Path
 
 import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
 
 from . import __version__
-from .chart import signal_color
+from .chart import capture_datetime, signal_color
 from .core import (
     FileInfo, SignalKey, available_signals, load_databases, missing_signal_reason,
-    signal_definition_fingerprint, signal_unit,
+    signal_choices, signal_definition_fingerprint, signal_unit,
 )
 from .persistence import (
     DbcReference, SignalGroup, SignalGroupStore, SignalReference, export_signal_group, import_signal_group,
@@ -35,17 +35,17 @@ def logo_pixmap(size: int) -> QtGui.QPixmap:
     return pixmap
 
 
-def clock_text(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+def clock_text(timestamp: float, source: str = "utc") -> str:
+    return capture_datetime(timestamp, source).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
 
 
-def cursor_clock_text(timestamp: float) -> str:
-    moment = datetime.fromtimestamp(timestamp)
+def cursor_clock_text(timestamp: float, source: str = "utc") -> str:
+    moment = capture_datetime(timestamp, source)
     return f"{moment:%H点%M分%S秒}{moment.microsecond // 1000}毫秒"
 
 
-def sample_clock_text(timestamp: float) -> str:
-    return datetime.fromtimestamp(timestamp).strftime("%Y-%m-%d %H:%M:%S.%f")
+def sample_clock_text(timestamp: float, source: str = "utc") -> str:
+    return capture_datetime(timestamp, source).strftime("%Y-%m-%d %H:%M:%S.%f")
 
 
 class SignalRowDelegate(QtWidgets.QStyledItemDelegate):
@@ -547,6 +547,24 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.chart.set_time_mode(mode)
         self.settings.setValue("chart/time_mode", mode)
 
+    def _set_time_source(self, _index: int) -> None:
+        source = self.time_source_combo.currentData()
+        self.settings.setValue("chart/time_source", source)
+        self.chart.time_axis.time_source = source
+        self.chart.time_axis.refresh_label()
+        for row, info in enumerate(self.files):
+            self.file_table.item(row, 1).setText(clock_text(info.first, source))
+        for row in range(self.raw_table.rowCount()):
+            cell = self.raw_table.item(row, 0)
+            if cell is not None and cell.data(QtCore.Qt.ItemDataRole.UserRole) is not None:
+                cell.setText(clock_text(cell.data(QtCore.Qt.ItemDataRole.UserRole), source))
+        if self.files and self.playhead:
+            self.time_label.setText(clock_text(self.playhead, source))
+        if self.cursor_x is not None and self.files:
+            self._update_cursor_values(self.cursor_x)
+        if self.measure_a is not None:
+            self._clear_measurement()
+
     def _saved_y_ranges(self) -> dict[str, list[float]]:
         try:
             value = json.loads(self.settings.value("chart/locked_ranges", "{}", type=str))
@@ -646,26 +664,30 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.measure_a = sample
             self.measure_b = None
             self.chart.set_measure_markers(sample[0] - origin, None)
-            self.measure_label.setText(f"{key.name} · A {sample_clock_text(sample[0])} · 点击第二个采样点")
-            self.measure_label.setToolTip(f"A = {sample[1]:.6g}，时间 {sample_clock_text(sample[0])}")
+            self.measure_label.setText(f"{key.name} · A {sample_clock_text(sample[0], self.time_source_combo.currentData())} · 点击第二个采样点")
+            self.measure_label.setToolTip(f"A = {sample[1]:.6g}，时间 {sample_clock_text(sample[0], self.time_source_combo.currentData())}")
             return
         self.measure_b = sample
         self.chart.set_measure_markers(self.measure_a[0] - origin, sample[0] - origin)
         seconds = abs(sample[0] - self.measure_a[0])
         interval = f"{seconds * 1000:.3f} ms" if seconds < 1 else f"{seconds:.6f} s"
-        self.measure_label.setText(f"{key.name} · Δt {interval}")
+        difference = sample[1] - self.measure_a[1]
+        unit = self.chart.layers[key].unit
+        value_delta = f"{difference:.6g}" + (f" {unit}" if unit else "")
+        self.measure_label.setText(f"{key.name} · Δt {interval} · Δ值 {value_delta}")
         self.measure_label.setToolTip(
-            f"A {sample_clock_text(self.measure_a[0])} = {self.measure_a[1]:.6g}；"
-            f"B {sample_clock_text(sample[0])} = {sample[1]:.6g}；间隔 {interval}"
+            f"A {sample_clock_text(self.measure_a[0], self.time_source_combo.currentData())} = {self.measure_a[1]:.6g}；"
+            f"B {sample_clock_text(sample[0], self.time_source_combo.currentData())} = {sample[1]:.6g}；"
+            f"间隔 {interval}；B − A = {value_delta}"
         )
 
     def _update_cursor_values(self, x_value: float) -> None:
         self.cursor_x = x_value
         self.cursor_time_label.setText(
-            cursor_clock_text(self.files[0].first + x_value) if self.files else "—"
+            cursor_clock_text(self.files[0].first + x_value, self.time_source_combo.currentData()) if self.files else "—"
         )
         self.cursor_absolute_label.setText(
-            clock_text(self.files[0].first + x_value) if self.files else "未载入记录文件"
+            clock_text(self.files[0].first + x_value, self.time_source_combo.currentData()) if self.files else "未载入记录文件"
         )
         self.cursor_readout.setToolTip(self.cursor_absolute_label.text())
         low, high = self.plot.viewRange()[0]
@@ -676,7 +698,12 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             value = sample[1] if sample and abs(sample[0] - self.files[0].first - x_value) <= tolerance else None
             unit = self.curve_table.item(row, 1).data(QtCore.Qt.ItemDataRole.UserRole) or ""
             unit_suffix = f" {unit}" if unit else ""
-            self.curve_table.item(row, 2).setText("—" if value is None else f"{value:.6g}{unit_suffix}")
+            choices = self.curve_table.item(row, 1).data(QtCore.Qt.ItemDataRole.UserRole + 1) or []
+            choice = next((label for scaled, label in choices
+                           if value is not None and math.isclose(value, scaled, rel_tol=1e-12, abs_tol=1e-9)), None)
+            self.curve_table.item(row, 2).setText(
+                "—" if value is None else f"{value:.6g}{unit_suffix}" + (f" ({choice})" if choice else "")
+            )
 
     def _add_files(self) -> None:
         paths, _ = QtWidgets.QFileDialog.getOpenFileNames(self, "选择 BLF 文件", "", "BLF 文件 (*.blf)")
@@ -714,7 +741,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.played_until = files[0].first
         self.file_table.setRowCount(len(files))
         for row, item in enumerate(files):
-            for col, value in enumerate((item.path.name, clock_text(item.first), str(item.frames))):
+            for col, value in enumerate((item.path.name, clock_text(item.first, self.time_source_combo.currentData()), str(item.frames))):
                 cell = QtWidgets.QTableWidgetItem(value)
                 cell.setToolTip(str(item.path))
                 self.file_table.setItem(row, col, cell)
@@ -746,6 +773,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
 
     def _refresh_channel_table(self) -> None:
         recorded = {channel for item in self.files for channel in item.channels}
+        observed = {}
+        for info in self.files:
+            for channel, frame_id, extended, _length in info.max_payloads:
+                observed.setdefault(channel, set()).add((frame_id, extended))
         channels = sorted(recorded | set(self.mapping) | set(self.missing_mappings) | self.unconfigured_channels)
         current = None
         if self.channel_table.currentRow() >= 0 and self.channel_table.item(self.channel_table.currentRow(), 0):
@@ -765,6 +796,22 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             cell = QtWidgets.QTableWidgetItem(self.mapping[channel].name if channel in self.mapping else value)
             cell.setToolTip(value)
             self.channel_table.setItem(row, 1, cell)
+            if channel in self.missing_mappings:
+                match_text = "DBC 缺失"
+            elif channel not in self.mapping:
+                match_text = "未配置 DBC"
+            elif not observed.get(channel):
+                match_text = "无 BLF 报文"
+            else:
+                try:
+                    database = load_databases({channel: self.mapping[channel]})[channel]
+                    defined = {(message.frame_id, message.is_extended_frame) for message in database.messages}
+                    total = len(observed[channel])
+                    matched = len(observed[channel] & defined)
+                    match_text = f"{matched / total:.1%}（{matched}/{total}）"
+                except Exception:
+                    match_text = "DBC 无法读取"
+            self.channel_table.setItem(row, 2, QtWidgets.QTableWidgetItem(match_text))
             if channel == current:
                 self.channel_table.selectRow(row)
 
@@ -1036,6 +1083,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
                 saved = self._saved_y_ranges().get(f"{key.storage_key()}|{fingerprint}")
                 if isinstance(saved, list) and len(saved) == 2:
                     self.chart.set_y_range(key, float(saved[0]), float(saved[1]))
+        self.chart.layers = dict(sorted(self.chart.layers.items(), key=lambda item: item[0].label()))
+        self.chart._sync_geometry()
         self.curve_table.blockSignals(True)
         self.curve_table.setRowCount(0)
         for row, key in enumerate(sorted(self.selected, key=lambda item: item.label())):
@@ -1051,6 +1100,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             name = QtWidgets.QTableWidgetItem(key.name)
             name.setToolTip(key.label())
             name.setData(QtCore.Qt.ItemDataRole.UserRole, unit)
+            name.setData(QtCore.Qt.ItemDataRole.UserRole + 1, signal_choices(key, databases))
             name.setForeground(QtGui.QColor(color))
             self.curve_table.setItem(row, 1, name)
             self.curve_table.setItem(row, 2, QtWidgets.QTableWidgetItem("—"))
@@ -1122,7 +1172,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             duration = self.files[-1].last - self.files[0].first
             self.timeline.setValue(int((timestamp - self.files[0].first) / max(0.001, duration) * 10000))
             self.timeline.blockSignals(False)
-            self.time_label.setText(clock_text(timestamp))
+            self.time_label.setText(clock_text(timestamp, self.time_source_combo.currentData()))
             self._append_raw(raw_rows)
             if self.follow.isChecked():
                 x = timestamp - self.files[0].first
@@ -1138,12 +1188,14 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         try:
             self.raw_table.setRowCount(len(rows))
             for row, (timestamp, channel, frame_id, kind, data) in enumerate(rows):
-                for col, value in enumerate((clock_text(timestamp), str(channel), f"0x{frame_id:X}", kind, data)):
+                for col, value in enumerate((clock_text(timestamp, self.time_source_combo.currentData()), str(channel), f"0x{frame_id:X}", kind, data)):
                     cell = self.raw_table.item(row, col)
                     if cell is None:
                         self.raw_table.setItem(row, col, QtWidgets.QTableWidgetItem(value))
                     elif cell.text() != value:
                         cell.setText(value)
+                    if col == 0:
+                        self.raw_table.item(row, col).setData(QtCore.Qt.ItemDataRole.UserRole, timestamp)
             if rows:
                 self.raw_table.scrollToBottom()
         finally:
@@ -1250,7 +1302,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         if self.worker:
             self._stop()
         self.playhead = target
-        self.time_label.setText(clock_text(target))
+        self.time_label.setText(clock_text(target, self.time_source_combo.currentData()))
         self.follow.setChecked(False)
         self.plot.setXRange(max(0, target - self.files[0].first - 30), target - self.files[0].first + 30)
         if was_running:

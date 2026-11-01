@@ -230,6 +230,15 @@ def signal_unit(key: SignalKey, databases: dict[int, cantools.database.Database]
     return definition[1].unit or "" if definition is not None else ""
 
 
+def signal_choices(key: SignalKey, databases: dict[int, cantools.database.Database]) -> list[tuple[float, str]]:
+    definition = _signal_definition(key, databases)
+    if definition is None:
+        return []
+    signal = definition[1]
+    return [(float(signal.conversion.raw_to_scaled(raw, decode_choices=False)), str(label))
+            for raw, label in (signal.choices or {}).items()]
+
+
 def missing_signal_reason(
     key: SignalKey,
     files: list[FileInfo],
