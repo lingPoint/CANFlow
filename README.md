@@ -1,6 +1,6 @@
 ![CANFlow Logo](img/canflow-logo.svg)
 
-# CANFlow v3.1.0
+# CANFlow v3.1.3
 
 CANFlow 是 Windows 桌面 CAN / CAN FD 离线分析工具。多份记录可在独立窗口中对照，多段 BLF 可在同一窗口串联回放；录制工具继续采集时，也可以回看已保存的历史文件。
 
@@ -38,6 +38,15 @@ python -m venv .venv
 ```
 
 无需安装 Python 时，可从 [Releases](https://github.com/lingPoint/CANFlow/releases) 下载 `CANFlow.exe`。版本标签（如 `v3.0.1`）会触发 Windows 测试、打包并发布正式版本；分支提交仍生成以提交 SHA 命名的预发布版本。EXE 不包含 BLF 或 DBC 文件，请自行选择本地记录和配置。
+
+本地打包时，在安装依赖和 PyInstaller 后使用以下命令；构建脚本会隔离其他软件的 DLL 路径：
+
+```powershell
+.venv\Scripts\Activate.ps1
+python -m pip install -r requirements-dev.txt "pyinstaller>=6.10,<7"
+./scripts/build_windows.ps1
+python scripts/smoke_exe.py dist/CANFlow.exe
+```
 
 
 

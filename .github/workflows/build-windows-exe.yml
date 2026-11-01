@@ -31,15 +31,8 @@ jobs:
           python -m pip install -r requirements-dev.txt "pyinstaller>=6.10,<7"
 
       - name: Build EXE
-        run: >-
-          python -m PyInstaller
-          --noconfirm
-          --clean
-          --onefile
-          --windowed
-          --name CANFlow
-          --add-data "canflow/assets;canflow/assets"
-          run.py
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
 
       - name: Check EXE
         shell: pwsh
@@ -47,6 +40,8 @@ jobs:
           if (-not (Test-Path -LiteralPath dist/CANFlow.exe)) {
             throw 'PyInstaller did not create dist/CANFlow.exe'
           }
+          python scripts/smoke_exe.py dist/CANFlow.exe
+          if ($LASTEXITCODE -ne 0) { throw 'Packaged application failed the startup test' }
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v4

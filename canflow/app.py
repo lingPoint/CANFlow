@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sys
 import tempfile
 import time
@@ -1431,6 +1432,15 @@ def main() -> None:
     application.setStyle("Fusion")
     window = MainWindow()
     window.show()
+    smoke_file = os.environ.get("CANFLOW_SMOKE_TEST_FILE")
+    if smoke_file:
+        def finish_smoke_test() -> None:
+            if window.isVisible() and len(window.sessions) == 2:
+                Path(smoke_file).write_text("ready", encoding="utf-8")
+                window.close()
+            else:
+                application.exit(1)
+        QtCore.QTimer.singleShot(500, finish_smoke_test)
     sys.exit(application.exec())
 
 
