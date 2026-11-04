@@ -18,3 +18,6 @@ dist/
 .tmp-site-update/
 site-package/canflow-v310-site.tar.gz
 *canflow.json
+/aws.env
+/.aws-article/
+/*release-v*/

@@ -106,6 +106,24 @@ def plot_points(
     return x, y
 
 
+def curve_viewport_edges(connection, signal: str, start: float, end: float) -> list[tuple[float, float]]:
+    """Interpolate visible curve boundaries only where real samples bracket them."""
+    edges = []
+    for boundary in (start, end):
+        before = connection.execute(
+            "SELECT timestamp, value FROM samples WHERE signal = ? AND timestamp <= ? "
+            "ORDER BY timestamp DESC, value ASC LIMIT 1", (signal, boundary)
+        ).fetchone()
+        after = connection.execute(
+            "SELECT timestamp, value FROM samples WHERE signal = ? AND timestamp >= ? "
+            "ORDER BY timestamp ASC, value ASC LIMIT 1", (signal, boundary)
+        ).fetchone()
+        if before and after and before[0] < boundary < after[0]:
+            ratio = (boundary - before[0]) / (after[0] - before[0])
+            edges.append((boundary, before[1] + ratio * (after[1] - before[1])))
+    return edges
+
+
 def plot_points_with_samples(
     connection: sqlite3.Connection, signal: str, start: float, end: float, max_bins: int = 1600
 ) -> tuple[list[float], list[float], list[float], list[float]]:

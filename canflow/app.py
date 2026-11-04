@@ -21,7 +21,7 @@ from .persistence import (
     DbcReference, SignalGroup, SignalGroupStore, SignalReference, export_signal_group, import_signal_group,
     load_project, make_signal_references, resolve_dbc_reference, save_project,
 )
-from .store import connect, nearest_sample, plot_points_with_samples
+from .store import connect, curve_viewport_edges, nearest_sample, plot_points_with_samples
 from .workers import DbcLoadWorker, ReplayWorker, ScanCache, ScanWorker
 from .workspace import MainWindow
 
@@ -1329,6 +1329,15 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             x, y, sample_x, sample_y = plot_points_with_samples(
                 self.db, key.storage_key(), origin + max(0, low), origin + high
             )
+            for edge_x, edge_y in curve_viewport_edges(
+                self.db, key.storage_key(), origin + max(0, low), origin + high
+            ):
+                if not x or edge_x < x[0]:
+                    x.insert(0, edge_x)
+                    y.insert(0, edge_y)
+                else:
+                    x.append(edge_x)
+                    y.append(edge_y)
             relative_x = [value - origin for value in x]
             self.curve_data[key] = (relative_x, y)
             self.chart.set_data(key, relative_x, y, [value - origin for value in sample_x], sample_y)
