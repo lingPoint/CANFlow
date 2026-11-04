@@ -246,6 +246,7 @@ class MultiSignalChart(QtWidgets.QWidget):
         layer = self.layers.pop(key, None)
         if layer is None:
             return
+        layer.view.setXLink(None)
         layer.view.removeItem(layer.curve)
         layer.view.removeItem(layer.samples)
         self.widget.scene().removeItem(layer.view)
@@ -257,6 +258,10 @@ class MultiSignalChart(QtWidgets.QWidget):
     def clear(self) -> None:
         for key in list(self.layers):
             self.remove_signal(key)
+
+    def closeEvent(self, event) -> None:
+        self.clear()
+        super().closeEvent(event)
 
     def focus(self, key: SignalKey) -> None:
         if key not in self.layers:

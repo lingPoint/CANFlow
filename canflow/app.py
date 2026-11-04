@@ -12,6 +12,7 @@ import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtSvg, QtWidgets
 
 from . import __version__
+from .analysis_cache import AnalysisReader, query_cache
 from .chart import capture_datetime, signal_color
 from .core import (
     FileInfo, SignalKey, available_signals, load_databases, missing_signal_reason,
@@ -21,7 +22,7 @@ from .persistence import (
     DbcReference, SignalGroup, SignalGroupStore, SignalReference, export_signal_group, import_signal_group,
     load_project, make_signal_references, resolve_dbc_reference, save_project,
 )
-from .store import connect, curve_viewport_edges, nearest_sample, plot_points_with_samples
+from .store import connect, nearest_sample
 from .workers import DbcLoadWorker, ReplayWorker, ScanCache, ScanWorker
 from .workspace import MainWindow
 
@@ -123,9 +124,13 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.selected: set[SignalKey] = set()
         self.cached: set[SignalKey] = set()
         self.worker: ReplayWorker | None = None
+        self.backfill_worker: ReplayWorker | None = None
         self._replay_error: str | None = None
         self.scanner: ScanWorker | None = None
         self.scan_cache = ScanCache()
+        self.container_indexes = {}
+        self._source_signatures = {}
+        self._source_invalid = False
         self.dbc_loader: DbcLoadWorker | None = None
         self._dbc_generation = 0
         self._signal_population = 0
@@ -133,6 +138,12 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.cache_dir = tempfile.TemporaryDirectory(prefix="canflow-")
         self.cache_path = Path(self.cache_dir.name) / "samples.sqlite"
         self.db = connect(self.cache_path)
+        self._reader_owner = object()
+        self._reader_generation = 0
+        self._cursor_generation = 0
+        self._plot_request = None
+        self._reader = None
+        self._start_analysis_reader()
         self.curves: dict[SignalKey, pg.PlotDataItem] = {}
         self.curve_data: dict[SignalKey, tuple[list[float], list[float]]] = {}
         self._plot_versions: dict[SignalKey, tuple] = {}
@@ -168,6 +179,73 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         from .session_ui import build_session_ui
         build_session_ui(self, SignalRowDelegate)
 
+    def _start_analysis_reader(self) -> None:
+        reader = AnalysisReader(self.cache_path, self._reader_owner)
+        reader.result.connect(self._analysis_result)
+        reader.failed.connect(self._analysis_failed)
+        self._reader = reader
+        reader.start()
+
+    def _stop_analysis_reader(self) -> None:
+        self._reader_generation += 1
+        self._cursor_generation += 1
+        self._plot_request = None
+        if self._reader:
+            self._reader.stop()
+            self._reader.wait()
+            self._reader = None
+        query_cache.clear_owner(self._reader_owner)
+
+    def _analysis_failed(self, kind, generation, error) -> None:
+        expected = self._cursor_generation if kind == 'cursors' else self._reader_generation
+        if self._closing or generation != expected:
+            return
+        if kind == 'views':
+            self._plot_request = None
+            self.view_loading_label.setText("波形加载失败")
+        self.statusBar().showMessage(f"数据加载失败：{error}")
+
+    def _analysis_result(self, kind, generation, values) -> None:
+        if kind == 'cursors':
+            if not self._closing and generation == self._cursor_generation and self.files:
+                self._render_cursor_values(values)
+            return
+        if self._closing or kind != 'views' or generation != self._reader_generation:
+            return
+        request = self._plot_request
+        if request is None or not self.files:
+            return
+        version, keys = request
+        origin, low, high = version[:3]
+        current = (self.files[0].first, *self.plot.viewRange()[0],
+                   self.db.execute('PRAGMA data_version').fetchone()[0], self.db.total_changes)
+        if current[:3] != version[:3]:
+            self._plot_request = None
+            self._refresh_plot()
+            return
+        self._plot_request = None
+        self.view_loading_label.setText("")
+        for key in keys:
+            if key not in self.curves or not self.chart.layers[key].visible:
+                continue
+            x, y, sample_x, sample_y, edges = values[key.storage_key()]
+            x, y = list(x), list(y)
+            for edge_x, edge_y in edges:
+                if not x or edge_x < x[0]:
+                    x.insert(0, edge_x)
+                    y.insert(0, edge_y)
+                else:
+                    x.append(edge_x)
+                    y.append(edge_y)
+            relative_x = [value - origin for value in x]
+            self.curve_data[key] = (relative_x, y)
+            self.chart.set_data(key, relative_x, y, [value - origin for value in sample_x], sample_y)
+            self._plot_versions[key] = version
+        if self.cursor_x is not None:
+            self._update_cursor_values(self.cursor_x)
+        if current != version:
+            self._refresh_plot()
+
     def show_editor(self, name: str) -> None:
         editors = {"files": self.files_dialog, "mapping": self.mapping_dialog,
                    "signals": self.signals_dialog, "display": self.display_panel,
@@ -184,8 +262,9 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self.channel_table.selectRow(0)
 
     def _update_workflow(self) -> None:
-        busy = self.worker is not None or self.scanner is not None or self.dbc_loader is not None
-        self.start_button.setEnabled(bool(self.files) and not busy)
+        busy = (self.worker is not None or self.backfill_worker is not None
+                or self.scanner is not None or self.dbc_loader is not None)
+        self.start_button.setEnabled(bool(self.files) and not busy and not self._source_invalid)
         self.pause_button.setEnabled(self.worker is not None and not self.worker.backfill)
         self.stop_button.setEnabled(busy)
         self.add_files.setEnabled(not busy)
@@ -691,11 +770,26 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             clock_text(self.files[0].first + x_value, self.time_source_combo.currentData()) if self.files else "未载入记录文件"
         )
         self.cursor_readout.setToolTip(self.cursor_absolute_label.text())
+        self._cursor_generation += 1
+        if not self.files:
+            return
+        keys = [self.curve_table.item(row, 0).data(QtCore.Qt.ItemDataRole.UserRole)
+                for row in range(self.curve_table.rowCount())]
+        for row in range(self.curve_table.rowCount()):
+            self.curve_table.item(row, 2).setText("加载中…")
+        version = (self.db.execute('PRAGMA data_version').fetchone()[0], self.db.total_changes)
+        self._reader.request('cursors', self._cursor_generation,
+                             (tuple(key.storage_key() for key in keys), self.files[0].first + x_value, version))
+
+    def _render_cursor_values(self, samples) -> None:
+        x_value = self.cursor_x
+        if x_value is None or not self.files:
+            return
         low, high = self.plot.viewRange()[0]
         tolerance = max((high - low) * 0.05, 0.001)
         for row in range(self.curve_table.rowCount()):
             key = self.curve_table.item(row, 0).data(QtCore.Qt.ItemDataRole.UserRole)
-            sample = nearest_sample(self.db, key.storage_key(), self.files[0].first + x_value) if self.files else None
+            sample = samples.get(key.storage_key())
             value = sample[1] if sample and abs(sample[0] - self.files[0].first - x_value) <= tolerance else None
             unit = self.curve_table.item(row, 1).data(QtCore.Qt.ItemDataRole.UserRole) or ""
             unit_suffix = f" {unit}" if unit else ""
@@ -1040,7 +1134,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             item.setHidden(query not in item.text().lower())
 
     def _apply_signals(self) -> None:
-        if self._closing:
+        if self._closing or not self._check_source_integrity():
             return
         chosen, unresolved = self._selection_from_list()
         changed = chosen != self.selected or unresolved != self.unresolved_selected
@@ -1052,9 +1146,17 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         if changed:
             self._mark_project_dirty()
         self._sync_curves()
-        if new and self.files and self.played_until > self.files[0].first:
+        if new and self.files and (self.worker or self.played_until > self.files[0].first):
             if self.worker:
-                self.statusBar().showMessage("播放中已更新选择；播放结束后可补画新信号")
+                if not getattr(self.worker, 'backfill', False):
+                    missing = new - getattr(self.worker, 'selected', set())
+                    if missing:
+                        self._launch_parallel_backfill(missing)
+                else:
+                    self.statusBar().showMessage("信号正在补画，新增信号已加入队列")
+                return
+            if self.backfill_worker:
+                self.statusBar().showMessage("信号正在补画，新增信号已加入队列")
                 return
             self._set_signal_notice(f"正在补画 {len(new)} 个新信号…")
             self._launch(new, backfill=True)
@@ -1112,6 +1214,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self._update_cursor_values(self.cursor_x)
 
     def _start(self) -> None:
+        if not self._check_source_integrity():
+            return
         if self.scanner or self.dbc_loader:
             self.statusBar().showMessage("正在准备数据，请等待完成后开始回放")
             return
@@ -1141,8 +1245,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
     def _launch(self, signals: set[SignalKey], start_at: float | None = None, backfill: bool = False) -> None:
         self._replay_error = None
         self.worker = ReplayWorker(self.files, self.mapping.copy(), signals.copy(), self.cache_path,
-                                   start_at, backfill, poll_updates=True)
+                                   start_at, backfill, poll_updates=True, indexes=self.container_indexes,
+                                   priority_range=self._current_priority_range() if backfill else None)
         worker = self.worker
+        worker.priority_ready.connect(lambda: self._priority_ready(worker))
         worker.advanced.connect(lambda data: self._advanced(worker, data))
         worker.failed.connect(lambda error: self._worker_failed(worker, error))
         worker.completed.connect(lambda complete: self._completed(worker, complete, signals, backfill))
@@ -1150,6 +1256,55 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         worker.start()
         self.replay_badge.setText("补画中" if backfill else "回放中")
         self.statusBar().showMessage("正在补画信号…" if backfill else "正在回放…")
+        self._update_workflow()
+
+    def _launch_parallel_backfill(self, signals: set[SignalKey]) -> None:
+        if self.backfill_worker or not signals or not self.files:
+            return
+        worker = ReplayWorker(self.files, self.mapping.copy(), signals.copy(), self.cache_path,
+                              backfill=True, poll_updates=True, indexes=self.container_indexes,
+                              priority_range=self._current_priority_range())
+        self.backfill_worker = worker
+        worker.priority_ready.connect(lambda: self._priority_ready(worker))
+        worker.failed.connect(lambda error: self._parallel_backfill_failed(worker, error))
+        worker.completed.connect(lambda complete: self._parallel_backfill_completed(worker, complete, signals))
+        worker.finished.connect(lambda: self._parallel_backfill_finished(worker))
+        self._set_signal_notice(f"正在后台补画 {len(signals)} 个新信号…")
+        worker.start()
+        self._update_workflow()
+
+    def _current_priority_range(self):
+        origin = self.files[0].first
+        low, high = self.plot.viewRange()[0]
+        return origin + max(0, low), origin + high
+
+    def _priority_ready(self, worker):
+        if self._closing or worker not in (self.worker, self.backfill_worker):
+            return
+        self._set_signal_notice("已优先加载当前区域的部分数据，正在后台补齐…")
+        self._refresh_plot()
+
+    def _parallel_backfill_failed(self, worker, error) -> None:
+        if not self._closing and worker is self.backfill_worker:
+            self._set_signal_notice(f"新信号加载失败：{error}")
+
+    def _parallel_backfill_completed(self, worker, complete, signals) -> None:
+        if self._closing or worker is not self.backfill_worker:
+            return
+        if complete:
+            self.cached |= signals
+            self._refresh_plot()
+            self._update_signal_notice()
+
+    def _parallel_backfill_finished(self, worker) -> None:
+        if self._closing or worker is not self.backfill_worker:
+            return
+        self.backfill_worker = None
+        if worker.succeeded:
+            active = self.worker.selected if self.worker else set()
+            missing = self.selected - self.cached - active
+            if missing:
+                self._launch_parallel_backfill(missing)
         self._update_workflow()
 
     def _poll_replay(self) -> None:
@@ -1223,8 +1378,10 @@ class AnalysisWindow(QtWidgets.QMainWindow):
     def _worker_finished(self, worker: ReplayWorker) -> None:
         if not self._closing and worker is self.worker:
             self.worker = None
-            missing = self.selected - self.cached
-            if worker.succeeded and missing and self.files and self.played_until > self.files[0].first:
+            active = self.backfill_worker.selected if self.backfill_worker else set()
+            missing = self.selected - self.cached - active
+            if (worker.succeeded and missing and not self.backfill_worker
+                    and self.files and self.played_until > self.files[0].first):
                 self._set_signal_notice(f"正在补画 {len(missing)} 个新信号…")
                 self._launch(missing, backfill=True)
             self._update_workflow()
@@ -1246,6 +1403,13 @@ class AnalysisWindow(QtWidgets.QMainWindow):
     def _update_signal_notice(self) -> None:
         if not self.files or not self.selected:
             self._set_signal_notice("")
+            return
+        active = set()
+        for worker in (self.worker, self.backfill_worker):
+            if worker:
+                active |= worker.selected
+        if active & (self.selected - self.cached):
+            self._set_signal_notice("信号正在加载，其他区域将在后台继续补齐…")
             return
         empty = [key for key in sorted(self.selected, key=lambda item: item.label())
                  if self.db.execute("SELECT 1 FROM samples WHERE signal = ? LIMIT 1",
@@ -1284,6 +1448,11 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         self.statusBar().showMessage("已停止")
 
     def _stop(self) -> None:
+        if self.backfill_worker:
+            backfill = self.backfill_worker
+            self.backfill_worker = None
+            backfill.stop()
+            backfill.wait()
         if self.worker:
             worker = self.worker
             worker.stop()
@@ -1310,7 +1479,7 @@ class AnalysisWindow(QtWidgets.QMainWindow):
             self._launch(self.selected, start_at=target)
 
     def _refresh_plot(self, *, all_visible: bool = False) -> None:
-        if self._closing or not self.files or not self.curves:
+        if self._closing or not self._check_source_integrity() or not self.files or not self.curves:
             return
         origin = self.files[0].first
         low, high = self.plot.viewRange()[0]
@@ -1319,39 +1488,40 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         visible_keys = [key for key in self.curves if self.chart.layers[key].visible]
         if not visible_keys:
             return
+        if self._plot_request is not None and self._plot_request[0] == version:
+            if not all_visible or set(self._plot_request[1]) >= set(visible_keys):
+                return
         batch_size = len(visible_keys) if all_visible else min(20, len(visible_keys))
         offset = getattr(self, "_plot_refresh_offset", 0) % len(visible_keys)
         keys = [visible_keys[(offset + index) % len(visible_keys)] for index in range(batch_size)]
         self._plot_refresh_offset = (offset + batch_size) % len(visible_keys)
-        for key in keys:
-            if not all_visible and self._plot_versions.get(key) == version:
-                continue
-            x, y, sample_x, sample_y = plot_points_with_samples(
-                self.db, key.storage_key(), origin + max(0, low), origin + high
-            )
-            for edge_x, edge_y in curve_viewport_edges(
-                self.db, key.storage_key(), origin + max(0, low), origin + high
-            ):
-                if not x or edge_x < x[0]:
-                    x.insert(0, edge_x)
-                    y.insert(0, edge_y)
-                else:
-                    x.append(edge_x)
-                    y.append(edge_y)
-            relative_x = [value - origin for value in x]
-            self.curve_data[key] = (relative_x, y)
-            self.chart.set_data(key, relative_x, y, [value - origin for value in sample_x], sample_y)
-            self._plot_versions[key] = version
-        if self.cursor_x is not None:
-            self._update_cursor_values(self.cursor_x)
+        keys = [key for key in keys if all_visible or self._plot_versions.get(key) != version]
+        if not keys:
+            return
+        request = (version, tuple(keys))
+        if self._plot_request == request:
+            return
+        self._reader_generation += 1
+        self._plot_request = request
+        self.view_loading_label.setText("正在加载波形…")
+        self._reader.request('views', self._reader_generation,
+                             (tuple(key.storage_key() for key in keys),
+                              origin + max(0, low), origin + high, version[3:]))
 
     def _reset_cache(self) -> None:
         self._clear_measurement()
+        self._stop_analysis_reader()
+        self.view_loading_label.setText("")
         self.db.close()
         self.cache_dir.cleanup()
         self.cache_dir = tempfile.TemporaryDirectory(prefix="canflow-")
         self.cache_path = Path(self.cache_dir.name) / "samples.sqlite"
         self.db = connect(self.cache_path)
+        self.container_indexes = {}
+        self._source_signatures = {path: self._source_signature(path)
+                                   for path in [*(info.path for info in self.files), *self.mapping.values()]}
+        self._source_invalid = False
+        self._start_analysis_reader()
         self.cached.clear()
         self.curve_data.clear()
         self._plot_versions.clear()
@@ -1365,6 +1535,28 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         for key, curve in self.curves.items():
             curve.setData([], [])
             self.chart.layers[key].samples.setData([], [])
+
+    @staticmethod
+    def _source_signature(path):
+        try:
+            stat = path.stat()
+            return stat.st_size, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_ino
+        except OSError:
+            return None
+
+    def _check_source_integrity(self) -> bool:
+        if self._source_invalid:
+            return False
+        if any(self._source_signature(path) != signature
+               for path, signature in self._source_signatures.items()):
+            self._stop()
+            self._reset_cache()
+            self._source_invalid = True
+            self.view_loading_label.setText("源文件已变化，请重新导入")
+            self.statusBar().showMessage("BLF 或 DBC 文件已变化；缓存已清除，请重新导入并检查配置")
+            self._update_workflow()
+            return False
+        return True
 
     def _clear_recordings(self) -> None:
         if self.scanner:
@@ -1421,6 +1613,8 @@ class AnalysisWindow(QtWidgets.QMainWindow):
         if self.scanner:
             self.scanner.stop()
             self.scanner.wait()
+        self._stop_analysis_reader()
+        self.chart.clear()
         self.db.close()
         self.cache_dir.cleanup()
 

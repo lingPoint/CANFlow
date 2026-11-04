@@ -29,14 +29,18 @@ def configure_overview(connection: sqlite3.Connection, first: float, last: float
     has 25,600 time buckets; the coarse level 1,600. Configuration survives seek
     and backfill, and summaries merge correctly even for timestamp rollbacks.
     """
-    if connection.execute("SELECT 1 FROM overview_config").fetchone():
-        return
-    step = max((last - first) / 25600, 1e-6)
-    connection.execute("INSERT INTO overview_config VALUES (?, ?)", (first, step))
-    cursor = connection.execute("SELECT signal, timestamp, value FROM samples")
-    while rows := cursor.fetchmany(16000):
-        _write_overview(connection, rows, first, step)
-    connection.commit()
+    connection.execute("BEGIN IMMEDIATE")
+    try:
+        if not connection.execute("SELECT 1 FROM overview_config").fetchone():
+            step = max((last - first) / 25600, 1e-6)
+            connection.execute("INSERT INTO overview_config VALUES (?, ?)", (first, step))
+            cursor = connection.execute("SELECT signal, timestamp, value FROM samples")
+            while rows := cursor.fetchmany(16000):
+                _write_overview(connection, rows, first, step)
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
 
 
 def _merge(target: dict, key, timestamp: float, value: float, low: float, high: float) -> None:

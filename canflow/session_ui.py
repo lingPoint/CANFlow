@@ -150,6 +150,9 @@ def build_session_ui(s, delegate):
     s.chart_summary_label = QtWidgets.QLabel("0 条已选 · 0 条显示")
     s.chart_summary_label.setObjectName("mutedLabel")
     readouts.addWidget(s.chart_summary_label)
+    s.view_loading_label = QtWidgets.QLabel("")
+    s.view_loading_label.setObjectName("mutedLabel")
+    readouts.addWidget(s.view_loading_label)
     s.measure_label = QtWidgets.QLabel("")
     s.measure_label.setObjectName("mutedLabel")
     s.measure_label.setMinimumWidth(0)
@@ -224,7 +227,7 @@ def build_editors(s, delegate):
     mapping.addWidget(s.mapping_controls)
 
     s.signals_dialog, signals = dialog(s, "添加信号", (800, 650))
-    signals.addWidget(QtWidgets.QLabel("勾选自动生效；回放中新增信号将在处理结束后自动补画。"))
+    signals.addWidget(QtWidgets.QLabel("勾选自动生效；新增信号会在后台加载并优先显示当前区域。"))
     s.signal_search = QtWidgets.QLineEdit()
     s.signal_search.setPlaceholderText("搜索信号 / 报文 ID")
     s.signal_search.setClearButtonEnabled(True)

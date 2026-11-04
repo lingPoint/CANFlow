@@ -2,16 +2,21 @@ from __future__ import annotations
 
 import threading
 import time
+import logging
+import struct
+import zlib
 from collections import OrderedDict, deque
 from pathlib import Path
 
 import can
+from can.io.blf import BLFParseError
 from PySide6 import QtCore
 
 from .core import (FileInfo, SignalKey, available_signals, prepare_decoders, inspect_file,
                    load_databases, signal_definition_fingerprint, usable_frame, validate_sequence)
 from .persistence import SignalReference
 from .store import configure_overview, connect, write_samples
+from .blf_index import ContainerIndex, IndexedBLFReader
 
 
 class ScanCache:
@@ -127,6 +132,7 @@ class ReplayWorker(QtCore.QThread):
     advanced = QtCore.Signal(object)
     failed = QtCore.Signal(str)
     completed = QtCore.Signal(bool)
+    priority_ready = QtCore.Signal()
 
     def __init__(
         self,
@@ -137,6 +143,8 @@ class ReplayWorker(QtCore.QThread):
         start_at: float | None = None,
         backfill: bool = False,
         poll_updates: bool = False,
+        indexes: dict | None = None,
+        priority_range: tuple[float, float] | None = None,
     ):
         super().__init__()
         self.files = files
@@ -146,6 +154,8 @@ class ReplayWorker(QtCore.QThread):
         self.start_at = start_at
         self.backfill = backfill
         self.poll_updates = poll_updates
+        self.indexes = indexes
+        self.priority_range = priority_range
         self._update_lock = threading.Lock()
         self._latest_update = None
         self._stop = threading.Event()
@@ -184,6 +194,35 @@ class ReplayWorker(QtCore.QThread):
             connection = connect(self.cache_path)
             configure_overview(connection, self.files[0].first, self.files[-1].last)
             decoders = prepare_decoders(databases, self.selected)
+            if self.backfill and self.indexes is not None and self.priority_range:
+                priority_batch = []
+                priority_count = 0
+                for info in self.files:
+                    index = self.indexes.get(info.path)
+                    if index is None:
+                        continue
+                    try:
+                        for message in index.read_range(*self.priority_range):
+                            if self._stop.is_set():
+                                break
+                            if not usable_frame(message):
+                                continue
+                            channel = int(message.channel) if message.channel is not None else -1
+                            decoder = decoders.get((channel, message.arbitration_id, message.is_extended_id))
+                            if decoder:
+                                decoded = [(storage, float(message.timestamp), value)
+                                           for storage, value in decoder(message.data)]
+                                priority_batch.extend(decoded)
+                                priority_count += len(decoded)
+                            if len(priority_batch) >= 16000:
+                                write_samples(connection, priority_batch)
+                                priority_batch.clear()
+                    except (OSError, ValueError, AttributeError, EOFError, BLFParseError,
+                            struct.error, zlib.error) as exc:
+                        logging.getLogger(__name__).warning('BLF priority index unavailable: %s', exc)
+                write_samples(connection, priority_batch)
+                if priority_count and not self._stop.is_set():
+                    self.priority_ready.emit()
             processed = 0
             total = sum(item.frames for item in self.files)
             batch: list[tuple[str, float, float]] = []
@@ -196,7 +235,15 @@ class ReplayWorker(QtCore.QThread):
                 if self.start_at is not None and info.last < self.start_at:
                     processed += info.frames
                     continue
-                with can.BLFReader(info.path) as reader:
+                index = None
+                if not self.backfill and self.indexes is not None and self.start_at in (None, self.files[0].first):
+                    try:
+                        index = ContainerIndex(info.path)
+                        self.indexes[info.path] = index
+                    except (OSError, ValueError, AttributeError, EOFError, struct.error) as exc:
+                        logging.getLogger(__name__).warning('BLF indexing unavailable: %s', exc)
+                reader_type = IndexedBLFReader(info.path, index) if index else can.BLFReader(info.path)
+                with reader_type as reader:
                     for message in reader:
                         if self._stop.is_set():
                             break
